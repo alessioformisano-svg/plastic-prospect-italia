@@ -1,0 +1,13 @@
+RELEASE SEMPLICE - NETLIFY DRAG & DROP
+
+1) Supabase: sostituire SOLO plastic-scraper/index.ts con quello incluso e fare Deploy. Verify JWT = OFF.
+2) Eseguire il test Morlacchi su Supabase.
+3) Solo se il test passa, caricare questo ZIP intero su Netlify con drag & drop.
+4) CTRL+F5 e Test ricerca.
+
+DUPLICATI:
+- nessuna cancellazione automatica
+- dashboard/database mostrano una sola voce per identita aziendale
+- nuovi risultati vengono deduplicati prima del salvataggio
+
+NESSUNA Netlify Function, nessun _redirects, nessun repository Git richiesto.

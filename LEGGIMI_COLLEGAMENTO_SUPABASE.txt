@@ -1,0 +1,14 @@
+COLLEGAMENTO SCRAPER
+
+Questa release NON usa Netlify Functions o proxy.
+La webapp chiama direttamente:
+https://artwylvnenaxyilcatec.supabase.co/functions/v1/plastic-scraper
+
+Formato chiamata:
+- POST
+- header apikey = publishable key del progetto
+- Content-Type: application/json
+- nessun Authorization Bearer
+
+Su Supabase plastic-scraper deve avere Verify JWT OFF.
+Lo scraper incluso gestisce OPTIONS/CORS e accetta apikey.

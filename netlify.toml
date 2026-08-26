@@ -1,0 +1,7 @@
+[functions]
+  directory = "netlify/functions"
+
+[[headers]]
+  for = "/.netlify/functions/plastic-scraper-proxy"
+  [headers.values]
+    Cache-Control = "no-store"

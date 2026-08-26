@@ -1,0 +1,18 @@
+DEDUPLICA FISICA DATABASE - VERSIONE SICURA
+
+Questa release elimina fisicamente i record duplicati dal database.
+
+Regole di sicurezza:
+1. Unisce record solo se:
+   - stessa Partita IVA; oppure
+   - stesso Codice Fiscale; oppure
+   - stesso nome aziendale normalizzato nella stessa provincia/regione.
+2. Sceglie come record principale quello più completo.
+3. Prima fonde telefono, email, sito, indirizzo, P.IVA, note, dati chiamata,
+   stato commerciale, preferiti e priorità.
+4. Salva prima TUTTI i record principali unificati.
+5. Solo se il salvataggio riesce elimina le copie duplicate.
+6. La pulizia viene eseguita una sola volta tramite physicalDedupVersion=1.
+7. Non esegue mai una cancellazione totale del database.
+
+Esempi come Bremtur Srl / Bremtur Srl e Ficed / Ficed vengono ridotti a un solo record fisico.
