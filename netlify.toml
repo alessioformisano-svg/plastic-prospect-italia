@@ -1,7 +1,14 @@
 [functions]
   directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+[[redirects]]
+  from = "/api/plastic-scraper"
+  to = "/.netlify/functions/plastic-scraper-proxy"
+  status = 200
+  force = true
 
 [[headers]]
-  for = "/.netlify/functions/plastic-scraper-proxy"
+  for = "/api/plastic-scraper"
   [headers.values]
     Cache-Control = "no-store"
