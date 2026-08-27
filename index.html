@@ -15905,7 +15905,7 @@ async function runEnrichmentPass(limit=1){
 
     done++;
     // Ritmo prudente per evitare 429.
-    await new Promise(res=>setTimeout(res,6500));
+    await new Promise(res=>setTimeout(res,4000));
   }
 
   if(changed)await reload();
@@ -16775,18 +16775,16 @@ async function startWebHarvest(auto=false){
 
   let state=await getHarvestState();
 
-  // V15: guardia immediata PRIMA di qualunque stato/query. Evita che un nuovo avvio,
-  // un refresh o un secondo tick riapra lo scraping mentre la coda è oltre soglia.
+  // V16: modalità bilanciata. Lo scraping non si blocca più del tutto:
+  // quando la coda è alta, privilegiamo l'arricchimento a piccoli batch e
+  // lasciamo passare una nuova query solo ogni N cicli.
   await loadEnrichmentStateCache();
   const initialQueue=getEnrichmentQueueStats();
   if(initialQueue.active>300){
-    const pauseMsg=`Scraping in pausa automatica · ${initialQueue.active} aziende attive da arricchire · riparte sotto 300`;
-    if($("#webHarvestStatus"))$("#webHarvestStatus").textContent=pauseMsg;
-    setCrawlerLive(pauseMsg,"busy");
-    harvestRunning=false;
-    if(!enrichRunning){enrichPauseRequested=false;startEnrichment(true);}
-    setTimeout(()=>{ if(navigator.onLine && !harvestRunning)startWebHarvest(true); },60000);
-    return;
+    const mode=initialQueue.active>1000?"molto rallentata":(initialQueue.active>500?"rallentata":"bilanciata");
+    const msg=`Modalità ${mode} · ${initialQueue.active} aziende attive · arricchimento prioritario`;
+    if($("#webHarvestStatus"))$("#webHarvestStatus").textContent=msg;
+    setCrawlerLive(msg,"busy");
   }
 
   // Se proviene dalla vecchia versione del crawler, viene già resettato da getHarvestState().
@@ -16810,42 +16808,38 @@ async function startWebHarvest(auto=false){
     if($("#webHarvestStatus"))$("#webHarvestStatus").textContent=status;
     setCrawlerLive(status,"busy");
 
-    // V14: backpressure reale sulla ricerca.
-    // >300 attive: ZERO nuove ricerche, si lavora solo sull'arricchimento.
-    // 101-300: ricerca lenta, con 2 arricchimenti prima di ogni query.
-    // 1-100: ritmo normale, con 1 arricchimento prima della query.
+    // V16: ricerca rallentata ma mai completamente ferma.
+    // >1000 attive: 5 arricchimenti per ciclo, 1 query ogni 10 cicli.
+    // 501-1000: 5 arricchimenti per ciclo, 1 query ogni 6 cicli.
+    // 301-500: 4 arricchimenti per ciclo, 1 query ogni 3 cicli.
+    // <=300: 3 arricchimenti e poi query normalmente.
     await loadEnrichmentStateCache();
     const qst=getEnrichmentQueueStats();
+    const enrichBurst=qst.active>1000?5:(qst.active>500?5:(qst.active>300?4:(qst.active>0?3:0)));
+    const queryEvery=qst.active>1000?10:(qst.active>500?6:(qst.active>300?3:1));
 
-    if(qst.active>300){
-      const pauseMsg=`Scraping in pausa automatica · ${qst.active} aziende attive da arricchire · riparte sotto 300`;
-      if($("#webHarvestStatus"))$("#webHarvestStatus").textContent=pauseMsg;
-      setCrawlerLive(pauseMsg,"busy");
-
-      // Smaltisce subito un blocco e poi lascia lavorare il ciclo automatico di arricchimento.
-      if(!enrichRunning){
-        enrichPauseRequested=false;
-        await startEnrichment(true);
-      }
-
-      harvestRunning=false;
-      await updateHarvestUi();
-      setTimeout(()=>{
-        if(navigator.onLine && !harvestRunning)startWebHarvest(true);
-      },60000);
-      return;
-    }
-
-    const enrichBurst=qst.active>100?2:(qst.active>0?1:0);
     if(enrichBurst && !enrichRunning){
-      const balanceMsg=qst.active>100
-        ? `Ricerca rallentata · ${qst.active} attive · ${enrichBurst} arricchimenti prima della prossima query`
-        : `Ricerca normale · ${qst.active} attive · 1 arricchimento prima della query`;
+      const balanceMsg=`Modalità bilanciata · ${qst.active} attive · ${enrichBurst} arricchimenti · 1 ricerca ogni ${queryEvery} ciclo${queryEvery===1?"":"i"}`;
       if($("#webHarvestStatus"))$("#webHarvestStatus").textContent=balanceMsg;
       setCrawlerLive(balanceMsg,"busy");
       enrichPauseRequested=false;
       await runEnrichmentPass(enrichBurst);
     }
+
+    state.balanceCycle=Number(state.balanceCycle||0)+1;
+    const canSearch=(queryEvery===1 || state.balanceCycle>=queryEvery);
+    if(!canSearch){
+      await setHarvestState(state);
+      await updateHarvestUi();
+      harvestRunning=false;
+      const stNow=getEnrichmentQueueStats();
+      const waitMsg=`Arricchimento prioritario · ciclo ${state.balanceCycle}/${queryEvery} · ${stNow.active} attive · prossima ricerca tra ${queryEvery-state.balanceCycle} ciclo${queryEvery-state.balanceCycle===1?"":"i"}`;
+      if($("#webHarvestStatus"))$("#webHarvestStatus").textContent=waitMsg;
+      setCrawlerLive(waitMsg,"busy");
+      setTimeout(()=>{if(navigator.onLine&&!harvestRunning)startWebHarvest(true)},30000);
+      return;
+    }
+    state.balanceCycle=0;
 
     try{
       const searchResult=await resilientWebSearch(task.query);
@@ -16865,10 +16859,10 @@ async function startWebHarvest(auto=false){
       setCrawlerLive(msg,"busy");
       if($("#liveCrawlerAdded"))$("#liveCrawlerAdded").textContent=state.added||0;
 
-      // V14: tra 101 e 300 attive rallenta anche il ritmo delle query.
+      // V16: dopo una query, la pausa dipende dalla pressione della coda.
       await updateHarvestUi();
       const postQueryStats=getEnrichmentQueueStats();
-      await new Promise(r=>setTimeout(r,postQueryStats.active>100?22000:8500));
+      await new Promise(r=>setTimeout(r,postQueryStats.active>1000?30000:(postQueryStats.active>500?22000:(postQueryStats.active>300?16000:8500))));
     }catch(err){
       console.warn("Ricerca prospect:",task.query,err);
       state.errors=(state.errors||0)+1;

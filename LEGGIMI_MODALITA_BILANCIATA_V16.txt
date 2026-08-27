@@ -1,0 +1,18 @@
+PLASTIC PROSPECT ITALIA - V16 MODALITA BILANCIATA
+
+Base: V15 STOP_SCARTI.
+
+COSA CAMBIA
+- Lo scraping automatico NON viene più bloccato completamente quando la coda di arricchimento è alta.
+- L'arricchimento resta prioritario e lavora in piccoli batch.
+
+RITMO AUTOMATICO
+- Oltre 1000 aziende attive: 5 arricchimenti per ciclo, 1 nuova ricerca ogni 10 cicli.
+- Da 501 a 1000 attive: 5 arricchimenti per ciclo, 1 nuova ricerca ogni 6 cicli.
+- Da 301 a 500 attive: 4 arricchimenti per ciclo, 1 nuova ricerca ogni 3 cicli.
+- Fino a 300 attive: 3 arricchimenti prima della ricerca, poi ritmo normale.
+
+ALTRO
+- Pausa tra singoli tentativi di arricchimento ridotta da 6,5 a 4 secondi.
+- Restano invariati: massimo 3 tentativi automatici, retry, scarti automatici V15, quarantena/validazione e scraper Supabase.
+- Nessuna modifica richiesta a Supabase.
