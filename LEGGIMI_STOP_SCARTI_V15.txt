@@ -1,0 +1,18 @@
+PLASTIC PROSPECT ITALIA - V15 STOP REALE + SCARTI AUTOMATICI
+
+Questa release NON modifica lo scraper Supabase.
+
+Correzioni:
+1) Backpressure verificato PRIMA di qualunque query: con oltre 300 aziende attive lo scraping automatico non parte.
+2) Classificazione NON distruttiva dei falsi record inequivocabili: città/province/regioni, materiali singoli e query del tipo "serigrafia a Bergamo" o "materie plastiche Pisa".
+3) Gli scarti automatici restano nel database per controllo, priorità 5, nota AUTO-SCARTO e stato visibile SCARTO AUTOMATICO.
+4) Gli scarti automatici NON entrano più nella coda di arricchimento e NON consumano i 3 tentativi.
+5) I record già lavorati/chiamati/preferiti/assegnati non vengono convertiti automaticamente in scarto.
+6) Il contatore Arricchimento mostra anche il numero di scarti.
+
+SOGLIE:
+- >300 attive: scraping fermo, solo arricchimento.
+- <=300: lo scraping può riprendere secondo il ritmo già previsto.
+
+CARICAMENTO:
+Aggiornare solo GitHub/Netlify con i file della release. Non modificare la Edge Function Supabase.

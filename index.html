@@ -14820,7 +14820,7 @@ window.DB_DATA = {
 const ORIGINAL = structuredClone(window.DB_DATA.records);
 const REGION_PROVINCES = window.DB_DATA.regionProvinces;
 const DB_NAME="plastic-prospect-italia", STORE="companies", META="meta";
-const SEED_VERSION=10, HARVEST_TARGET=2500, HARVEST_VERSION=19, ENRICH_VERSION=6;
+const SEED_VERSION=10, HARVEST_TARGET=2500, HARVEST_VERSION=20, ENRICH_VERSION=7;
 const SUPABASE_CFG=window.PLASTIC_SUPABASE||{};
 const ADMIN_ALIAS=String(SUPABASE_CFG.adminAlias||"AMMINISTRATORE").toUpperCase();
 const ADMIN_EMAIL=String(SUPABASE_CFG.adminEmail||"").toLowerCase();
@@ -15106,6 +15106,7 @@ function invalidProspectResult(hit){
 }
 
 const AUTO_VERIFY_PREFIX="AUTO-VERIFICA:";
+const AUTO_DISCARD_PREFIX="AUTO-SCARTO:";
 
 function companyWasWorked(r){
   const outcome=String(r?.esito_chiamata||r?.stato||"").trim().toUpperCase();
@@ -15137,6 +15138,13 @@ function nonCompanyIdentityReason(name,task={}){
   if(knownLocationNames().has(n))return "solo località/provincia";
   if(task?.localita && n===normalize(task.localita))return "solo località della ricerca";
   if(GENERIC_STANDALONE_NAMES.has(n))return "solo materiale/attività generica";
+  // Forme tipo "materie plastiche Pisa", "serigrafia Bergamo", "incisioni Torino".
+  // Se la coda finale è una località nota, non è una ragione sociale.
+  const genericLead=clean.match(/^(?:incisioni?|lavorazioni?|lavorazione|insegne|serigrafia|stampa(?: digitale)?|allestimenti|plastica|plastiche|materie plastiche|plexiglass|plexiglas|forex)\s+(?:a|in|di)?\s*(.+)$/i);
+  if(genericLead){
+    const tail=normalize(genericLead[1]||"");
+    if(knownLocationNames().has(tail) || (task?.localita && tail===normalize(task.localita)))return "attività/materiale + località, non ragione sociale";
+  }
   if(/^(?:incisioni?|lavorazioni?|lavorazione|insegne|serigrafia|stampa|allestimenti|plastica|plastiche|materie plastiche)\s+(?:a|in|di)?\s*[a-zà-ÿ' -]{2,60}$/i.test(clean)){
     const tail=normalize(clean.replace(/^(?:incisioni?|lavorazioni?|lavorazione|insegne|serigrafia|stampa|allestimenti|plastica|plastiche|materie plastiche)\s+(?:a|in|di)?\s*/i,""));
     if(knownLocationNames().has(tail) || (task?.localita && tail===normalize(task.localita)))return "attività + località, non ragione sociale";
@@ -15191,6 +15199,7 @@ async function validateProspectIdentity(hit,azienda,contact,task){
 }
 
 function isAutoQuarantined(r){return String(r?.note||"").startsWith(AUTO_VERIFY_PREFIX)}
+function isAutoDiscarded(r){return String(r?.note||"").startsWith(AUTO_DISCARD_PREFIX)}
 
 function canonical(r){
   const o={
@@ -15262,6 +15271,13 @@ async function bootstrapData(){
     if(qr.quarantined||qr.renamed)console.info(`Verifica identità DB: ${qr.quarantined} sospetti messi in quarantena, ${qr.renamed} titoli ripuliti.`);
   }catch(err){console.error("Quarantena prospect sospetti annullata",err)}
 
+  // V15: i falsi record inequivocabili (città, materiali, attività+località) escono dalla coda.
+  // Non vengono cancellati e non vengono toccati se già lavorati da un operatore.
+  try{
+    const dr=await classifyObviousNonCompaniesOnce();
+    if(dr.discarded)console.info(`Scarto automatico DB: ${dr.discarded} record esclusi dalla coda di arricchimento.`);
+  }catch(err){console.error("Classificazione scarti automatici annullata",err)}
+
   // Poi deduplica FISICAMENTE il database sui nomi già normalizzati.
   // Salva sempre prima il record unificato e cancella le copie solo dopo upsert riuscito.
   try{
@@ -15282,8 +15298,16 @@ async function bootstrapData(){
   setTimeout(()=>{
     if(navigator.onLine){
       const archivio=useCloudData()?"Supabase Cloud":"archivio locale di sicurezza";
-      setCrawlerLive(`Ricerca automatica pronta · dati su ${archivio}.`,"ok");
-      startWebHarvest(true);
+      loadEnrichmentStateCache().then(()=>{
+        const st=getEnrichmentQueueStats();
+        if(st.active>300){
+          setCrawlerLive(`Scraping in pausa automatica · ${st.active} aziende attive da arricchire · riparte sotto 300`,"busy");
+          if(!enrichRunning)startEnrichment(true);
+        }else{
+          setCrawlerLive(`Ricerca automatica pronta · dati su ${archivio}.`,"ok");
+          startWebHarvest(true);
+        }
+      });
     }else{
       setCrawlerLive("Nessuna connessione Internet: ricerca in pausa.","error");
     }
@@ -15466,7 +15490,7 @@ function card(r){
 }
 function renderResults(){
   const arr=filtered();$("#resultCount").textContent=arr.length;$("#cards").innerHTML=arr.length?arr.map(card).join(""):`<div class="empty">Nessuna azienda con questi filtri.</div>`;
-  $("#tableBody").innerHTML=arr.map(r=>`<tr><td><b>${esc(r.azienda)}</b></td><td>${esc(r.comune)} (${esc(r.provincia)})<br><span class="meta">${esc(r.regione)}</span></td><td>${esc(r.attivita)}</td><td>${esc(r.interesse||r.materiali||"-")}</td><td>${r.telefono?`<a href="tel:${esc(r.telefono.replace(/\s/g,""))}">${esc(r.telefono)}</a>`:`<button class="btn" onclick='enrichSingleRecord(${JSON.stringify(r._id)})'>Completa dati</button>`}</td><td>${r.sito?`<a target="_blank" rel="noopener" href="${esc(r.sito)}">Sito web</a><br>`:""}${r.email?`<a href="mailto:${esc(r.email)}">${esc(r.email)}</a>`:`<span class="meta">email da trovare</span>`}</td><td><span class="score">${r.priorita||0}</span></td><td>${esc(r.assegnato_a||"-")}</td><td>${esc(r.chiamato_da||"-")}</td><td>${esc(r.data_chiamata||"-")}</td><td><span class="tag">${esc(r.esito_chiamata||"DA CONTATTARE")}</span></td><td><button class="btn" onclick='openDetail(${JSON.stringify(r._id)})'>Apri</button></td></tr>`).join("")
+  $("#tableBody").innerHTML=arr.map(r=>`<tr><td><b>${esc(r.azienda)}</b></td><td>${esc(r.comune)} (${esc(r.provincia)})<br><span class="meta">${esc(r.regione)}</span></td><td>${esc(r.attivita)}</td><td>${esc(r.interesse||r.materiali||"-")}</td><td>${r.telefono?`<a href="tel:${esc(r.telefono.replace(/\s/g,""))}">${esc(r.telefono)}</a>`:`<button class="btn" onclick='enrichSingleRecord(${JSON.stringify(r._id)})'>Completa dati</button>`}</td><td>${r.sito?`<a target="_blank" rel="noopener" href="${esc(r.sito)}">Sito web</a><br>`:""}${r.email?`<a href="mailto:${esc(r.email)}">${esc(r.email)}</a>`:`<span class="meta">email da trovare</span>`}</td><td><span class="score">${r.priorita||0}</span></td><td>${esc(r.assegnato_a||"-")}</td><td>${esc(r.chiamato_da||"-")}</td><td>${esc(r.data_chiamata||"-")}</td><td><span class="tag">${isAutoDiscarded(r)?"SCARTO AUTOMATICO":esc(r.esito_chiamata||"DA CONTATTARE")}</span></td><td><button class="btn" onclick='openDetail(${JSON.stringify(r._id)})'>Apri</button></td></tr>`).join("")
 }
 $$(".mode").forEach(b=>b.onclick=()=>{mode=b.dataset.mode;$$(".mode").forEach(x=>x.classList.toggle("active",x===b));$("#cards").classList.toggle("hidden",mode!=="cards");$("#tableWrap").classList.toggle("hidden",mode!=="table")});
 
@@ -15486,7 +15510,7 @@ function renderDashboard(){
   const withSite=records.filter(r=>String(r.sito||"").trim()).length,withEmail=records.filter(r=>String(r.email||"").trim()).length,noRegion=records.filter(r=>!String(r.regione||"").trim()).length;
   if($("#kpiWithSite"))$("#kpiWithSite").textContent=withSite;
   if($("#kpiWithEmail"))$("#kpiWithEmail").textContent=withEmail;
-  if($("#kpiNoRegion"))$("#kpiNoRegion").textContent=noRegion;const incomplete=records.filter(r=>missingContactCount(r)>0).length;if($("#kpiIncomplete"))$("#kpiIncomplete").textContent=incomplete;updateEnrichmentProgress();
+  if($("#kpiNoRegion"))$("#kpiNoRegion").textContent=noRegion;const incomplete=records.filter(r=>!isAutoDiscarded(r) && missingContactCount(r)>0).length;if($("#kpiIncomplete"))$("#kpiIncomplete").textContent=incomplete;updateEnrichmentProgress();
   const counts={};records.forEach(r=>{if(r.regione)counts[r.regione]=(counts[r.regione]||0)+1});const entries=Object.entries(counts).sort((a,b)=>b[1]-a[1]),max=Math.max(...entries.map(x=>x[1]),1);
   $("#regionBars").innerHTML=entries.map(([n,c])=>`<div class="bar-row bar-click" role="button" tabindex="0" onclick='openDashboardCase("region",${JSON.stringify(n)})' onkeydown='if(event.key==="Enter"||event.key===" "){event.preventDefault();openDashboardCase("region",${JSON.stringify(n)})}'><span>${esc(n)}</span><div class="bar-track"><div class="bar-fill" style="width:${c/max*100}%"></div></div><b>${c}</b></div>`).join("")+(noRegion?`<div class="bar-row pending-region bar-click" role="button" tabindex="0" onclick='openDashboardCase("no-region")'><span>DA GEOLOCALIZZARE</span><div class="bar-track"><div class="bar-fill" style="width:${Math.min(100,noRegion/max*100)}%"></div></div><b>${noRegion}</b></div>`:"");
   $("#coverageBadge").textContent=`${entries.length}/20 regioni · totale ${records.length}`;const topValid=records.filter(r=>!invalidCompanyName(r.azienda)&&!((r.fonte||r.sito)&&invalidProspectResult({title:r.azienda,url:r.fonte||r.sito})));$("#topList").innerHTML=[...topValid].sort((a,b)=>(b.priorita||0)-(a.priorita||0)).slice(0,8).map(r=>`<div class="top-item top-click" role="button" tabindex="0" onclick='openDetail(${JSON.stringify(r._id)})'><div><b>${esc(r.azienda)}</b><div class="meta">${esc(r.regione)} · ${esc(r.attivita)}</div></div><span class="score">${r.priorita||0}</span></div>`).join("")
@@ -15739,8 +15763,9 @@ function enrichmentAttempts(r){return Number(enrichmentStateCache.attempts?.[r._
 function enrichmentNextAt(r){return Number(enrichmentStateCache.nextAt?.[r._id]||0)}
 function isReliablePartial(r){return !!(String(r.sito||"").trim() && (String(r.telefono||"").trim() || String(r.email||"").trim()))}
 function getEnrichmentQueueStats(now=Date.now()){
-  let complete=0,partial=0,active=0,waiting=0,manual=0,incomplete=0;
+  let complete=0,partial=0,active=0,waiting=0,manual=0,incomplete=0,discarded=0;
   for(const r of records){
+    if(isAutoDiscarded(r)){discarded++;continue;}
     const miss=missingContactCount(r);
     if(!miss){complete++;continue}
     incomplete++;
@@ -15749,12 +15774,12 @@ function getEnrichmentQueueStats(now=Date.now()){
     if(attempts>=3){manual++;continue}
     if(enrichmentNextAt(r)>now)waiting++; else active++;
   }
-  return {total:records.length,complete,partial,active,waiting,manual,incomplete};
+  return {total:records.length,complete,partial,active,waiting,manual,incomplete,discarded};
 }
 function updateEnrichmentProgress(){
   const st=getEnrichmentQueueStats();
   if($("#liveEnrichmentStatus")){
-    $("#liveEnrichmentStatus").textContent=`Arricchimento: ${st.complete} complete · ${st.partial} parziali · ${st.active} attive · ${st.waiting} in attesa · ${st.manual} manuali`;
+    $("#liveEnrichmentStatus").textContent=`Arricchimento: ${st.complete} complete · ${st.partial} parziali · ${st.active} attive · ${st.waiting} in attesa · ${st.manual} manuali · ${st.discarded} scarti`;
   }
   return st;
 }
@@ -15846,7 +15871,7 @@ async function runEnrichmentPass(limit=1){
   // Solo la coda ATTIVA è bloccante. I record in attesa del retry e quelli esauriti
   // non impediscono allo scraping di proseguire.
   const candidates=records
-    .filter(r=>missingContactCount(r)>0 && enrichmentAttempts(r)<3 && enrichmentNextAt(r)<=now)
+    .filter(r=>!isAutoDiscarded(r) && missingContactCount(r)>0 && enrichmentAttempts(r)<3 && enrichmentNextAt(r)<=now)
     .sort((a,b)=>{
       const da=enrichmentAttempts(a)-enrichmentAttempts(b);
       return da || enrichmentSort(a,b);
@@ -16674,6 +16699,30 @@ async function quarantineSuspiciousExistingOnce(){
   return {quarantined,renamed};
 }
 
+const AUTO_DISCARD_VERSION=1;
+function obviousAutoDiscardReason(r){
+  if(companyWasWorked(r))return "";
+  const name=String(r?.azienda||"").trim();
+  return nonCompanyIdentityReason(name,{localita:String(r?.comune||"").trim()});
+}
+async function classifyObviousNonCompaniesOnce(){
+  const done=Number(await metaGet("autoDiscardVersion")||0);
+  if(done>=AUTO_DISCARD_VERSION)return {discarded:0};
+  const all=await rawGetAllForPhysicalDedup();
+  const updates=[]; let discarded=0;
+  for(const raw of all){
+    const r=canonicalPreserveExistingId(raw);
+    const reason=obviousAutoDiscardReason(r);
+    if(!reason)continue;
+    r.note=`${AUTO_DISCARD_PREFIX} ${reason}. Escluso dalla coda automatica; record conservato per controllo.`;
+    r.priorita=Math.min(Number(r.priorita||0)||5,5);
+    updates.push(r);discarded++;
+  }
+  if(updates.length)await putExactProspects(updates);
+  await metaSet("autoDiscardVersion",AUTO_DISCARD_VERSION);
+  return {discarded};
+}
+
 async function getHarvestState(){
   let s=await metaGet("webHarvestState");
   if(!s || Number(s.version||0)!==HARVEST_VERSION){
@@ -16725,6 +16774,20 @@ async function startWebHarvest(auto=false){
   harvestPauseRequested=false;
 
   let state=await getHarvestState();
+
+  // V15: guardia immediata PRIMA di qualunque stato/query. Evita che un nuovo avvio,
+  // un refresh o un secondo tick riapra lo scraping mentre la coda è oltre soglia.
+  await loadEnrichmentStateCache();
+  const initialQueue=getEnrichmentQueueStats();
+  if(initialQueue.active>300){
+    const pauseMsg=`Scraping in pausa automatica · ${initialQueue.active} aziende attive da arricchire · riparte sotto 300`;
+    if($("#webHarvestStatus"))$("#webHarvestStatus").textContent=pauseMsg;
+    setCrawlerLive(pauseMsg,"busy");
+    harvestRunning=false;
+    if(!enrichRunning){enrichPauseRequested=false;startEnrichment(true);}
+    setTimeout(()=>{ if(navigator.onLine && !harvestRunning)startWebHarvest(true); },60000);
+    return;
+  }
 
   // Se proviene dalla vecchia versione del crawler, viene già resettato da getHarvestState().
   if(records.length>=HARVEST_TARGET){
