@@ -15070,6 +15070,7 @@ function invalidCompanyName(name){
   if(/^!?\s*\[?\s*(?:image|immagine|img|thumbnail|logo|foto|picture)\b/i.test(raw))return true;
 
   const t=cleanSerpTitle(raw);
+  if(/^@[^@]{2,80}@$/i.test(t))return true;
   if(t.length<2||t.length>120)return true;
   if(genericProspectPhrase(t))return true;
 
@@ -15896,22 +15897,35 @@ async function fetchTextWithTimeout(url,options={},timeoutMs=30000){
 function canonicalCompanyNameFromSearchTitle(title){
   let t=cleanSerpTitle(title).replace(/^\s*[ᐅ•·]+\s*/g,"").trim();
   if(!t)return "";
+  if(/^@[^@]{2,80}@$/i.test(t))return ""; // placeholder/handle, non ragione sociale
   t=t.replace(/\s*:\s*(?:Mappa e Contatti|Dati societari|Dati aziendali|Orari Apertura|Address & Phone Number).*$/i,"").trim();
   t=t.replace(/,?\s*(?:Partita IVA|P\.?\s*IVA|Fatturato|bilanci|indici|Orari Apertura|Mappa e Contatti|Address & Phone Number).*$/i,"").trim();
 
-  const legal=t.match(/^(.{2,95}?\b(?:S\.?\s*R\.?\s*L\.?|SRLS|S\.?\s*P\.?\s*A\.?|SNC|S\.?\s*N\.?\s*C\.?|SAS|S\.?\s*A\.?\s*S\.?))\b/i);
-  if(legal)t=legal[1].trim();
-  else{
-    const parts=t.split(/\s+[|–—]\s+|\s+-\s+/).map(x=>x.trim()).filter(Boolean);
-    if(parts.length>1){
-      const plausible=parts.filter(x=>!genericProspectPhrase(x) && !/^(?:specialisti?|lavorazioni?|materie plastiche|torino|milano|piemonte|lombardia)\b/i.test(x));
-      if(plausible.length)t=plausible.sort((a,b)=>a.length-b.length)[0];
+  // I titoli SEO sono spesso "descrizione | NOME AZIENDA" oppure
+  // "NOME AZIENDA - descrizione". Prima separiamo i blocchi e scegliamo
+  // quello che assomiglia davvero a una ragione sociale/brand.
+  const parts=t.split(/\s+[|–—]\s+|\s+-\s+/).map(x=>x.trim()).filter(Boolean);
+  if(parts.length>1){
+    const legalPart=parts.find(x=>/\b(?:S\.?\s*R\.?\s*L\.?|SRLS|S\.?\s*P\.?\s*A\.?|SNC|S\.?\s*N\.?\s*C\.?|SAS|S\.?\s*A\.?\s*S\.?)\b/i.test(x));
+    if(legalPart)t=legalPart;
+    else{
+      const brandParts=parts.filter(x=>
+        !genericProspectPhrase(x) &&
+        !/^(?:specialisti?|lavorazioni?|lavorazione|materie plastiche|articoli domestici|allestimenti|fabbricazione|produzione|torino|milano|piemonte|lombardia)\b/i.test(x) &&
+        !/^(?:azienda|aziende|impresa|imprese|ditta|ditte)\b/i.test(x)
+      );
+      if(brandParts.length)t=brandParts.sort((a,b)=>a.length-b.length)[0];
       else if(!genericProspectPhrase(parts[parts.length-1]))t=parts[parts.length-1];
     }
   }
 
+  // Se il blocco scelto contiene la forma legale, tronca eventuali metadati successivi.
+  const legal=t.match(/^(.{2,95}?\b(?:S\.?\s*R\.?\s*L\.?|SRLS|S\.?\s*P\.?\s*A\.?|SNC|S\.?\s*N\.?\s*C\.?|SAS|S\.?\s*A\.?\s*S\.?))\b/i);
+  if(legal)t=legal[1].trim();
+
   t=t.replace(/\s+(?:a|in)\s+[^,|:]{2,80}\s*\([A-Z]{2}\)\s*$/i,"").trim();
   t=t.replace(/\s+(?:a|in)\s+[^,|:]{2,80},\s*(?:via|viale|piazza|corso|strada|loc\.?|localit[aà])\b.*$/i,"").trim();
+  if(/^@|@$/.test(t))return "";
   if(invalidCompanyName(t))return "";
   return t.length>=3&&t.length<=95?t:"";
 }
@@ -16403,7 +16417,7 @@ async function mergeWebCandidates(cands){
   return added;
 }
 
-const GENERIC_NAME_CLEANUP_VERSION=1;
+const GENERIC_NAME_CLEANUP_VERSION=2;
 async function cleanupGenericProspectsOnce(){
   const done=Number(await metaGet("genericNameCleanupVersion")||0);
   if(done>=GENERIC_NAME_CLEANUP_VERSION)return {deleted:0,renamed:0,rescored:0};
@@ -16415,14 +16429,21 @@ async function cleanupGenericProspectsOnce(){
     const oldName=String(r.azienda||"").trim();
     const cleaned=canonicalCompanyNameFromSearchTitle(oldName);
     if(!cleaned){
-      if(genericProspectPhrase(oldName) && !meaningfulStatus(r.esito_chiamata) && !meaningfulStatus(r.stato))deleteIds.push(String(r._id||""));
+      const obviousSeoGarbage = genericProspectPhrase(oldName)
+        || /^@[^@]{2,80}@$/i.test(oldName)
+        || (/[|–—-]/.test(oldName) && /\b(materie plastiche|articoli domestici|lavorazion|fabbricazione|produzione|plexiglas|plexiglass|policarbonato)\b/i.test(oldName));
+      if(obviousSeoGarbage && !meaningfulStatus(r.esito_chiamata) && !meaningfulStatus(r.stato)
+         && !String(r.note||"").trim() && !String(r.note_chiamata||"").trim() && !String(r.data_chiamata||"").trim()){
+        deleteIds.push(String(r._id||""));
+      }
       continue;
     }
     let changed=false;
     if(cleaned!==oldName){r.azienda=cleaned;changed=true;renamed++;}
     // I record automatici mai lavorati con score 98/99 vengono riportati sotto 95.
     // I record già chiamati/modificati manualmente non vengono toccati.
-    if(Number(r.priorita||0)>=98 && String(r.fonte||"").trim() && !meaningfulStatus(r.esito_chiamata) && !meaningfulStatus(r.stato)){
+    if(Number(r.priorita||0)>=98 && !meaningfulStatus(r.esito_chiamata) && !meaningfulStatus(r.stato)
+       && !String(r.note||"").trim() && !String(r.note_chiamata||"").trim() && !String(r.data_chiamata||"").trim()){
       r.priorita=Math.min(94,Number(r.priorita||0));changed=true;rescored++;
     }
     if(changed)updates.push(r);
