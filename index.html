@@ -15900,10 +15900,13 @@ async function startEnrichment(auto=false){
     const st=getEnrichmentQueueStats();
     if(!st.active)break;
 
-    const changed=await runEnrichmentPass(auto?1:Math.min(5,st.active));
+    // V14: quando la coda è molto alta il background lavora a blocchi più consistenti.
+    // Così il crawler può davvero fermarsi e lasciare spazio allo smaltimento della coda.
+    const autoBatch=st.active>300?5:(st.active>100?2:1);
+    const changed=await runEnrichmentPass(auto?Math.min(autoBatch,st.active):Math.min(5,st.active));
     totalChanged+=changed;cycles++;
 
-    // Auto: una azienda alla volta per convivere con il crawler.
+    // Auto: un solo blocco per tick; il prossimo tick riprende dalla coda aggiornata.
     if(auto)break;
     await new Promise(res=>setTimeout(res,8000));
   }
@@ -15911,7 +15914,7 @@ async function startEnrichment(auto=false){
   enrichRunning=false;
   if($("#enrichWebStatus")){
     const st=updateEnrichmentProgress();
-    $("#enrichWebStatus").textContent=`Arricchimento pronto · ${totalChanged} aggiornamenti · attive ${st.active} · manuali ${st.manual}`;
+    $("#enrichWebStatus").textContent=`Arricchimento pronto · ${totalChanged} aggiornamenti · attive ${st.active} · attesa ${st.waiting} · manuali ${st.manual}`;
   }
 }
 function pauseEnrichment(){
@@ -16744,13 +16747,37 @@ async function startWebHarvest(auto=false){
     if($("#webHarvestStatus"))$("#webHarvestStatus").textContent=status;
     setCrawlerLive(status,"busy");
 
-    // V13: bilanciamento dinamico. Lo scraping NON si blocca mai per le aziende irrisolvibili:
-    // conta solo la coda attiva (max 3 tentativi). Più la coda cresce, più richieste vanno all'arricchimento.
+    // V14: backpressure reale sulla ricerca.
+    // >300 attive: ZERO nuove ricerche, si lavora solo sull'arricchimento.
+    // 101-300: ricerca lenta, con 2 arricchimenti prima di ogni query.
+    // 1-100: ritmo normale, con 1 arricchimento prima della query.
     await loadEnrichmentStateCache();
     const qst=getEnrichmentQueueStats();
-    const enrichBurst=qst.active>300?4:(qst.active>100?2:(qst.active>0?1:0));
+
+    if(qst.active>300){
+      const pauseMsg=`Scraping in pausa automatica · ${qst.active} aziende attive da arricchire · riparte sotto 300`;
+      if($("#webHarvestStatus"))$("#webHarvestStatus").textContent=pauseMsg;
+      setCrawlerLive(pauseMsg,"busy");
+
+      // Smaltisce subito un blocco e poi lascia lavorare il ciclo automatico di arricchimento.
+      if(!enrichRunning){
+        enrichPauseRequested=false;
+        await startEnrichment(true);
+      }
+
+      harvestRunning=false;
+      await updateHarvestUi();
+      setTimeout(()=>{
+        if(navigator.onLine && !harvestRunning)startWebHarvest(true);
+      },60000);
+      return;
+    }
+
+    const enrichBurst=qst.active>100?2:(qst.active>0?1:0);
     if(enrichBurst && !enrichRunning){
-      const balanceMsg=`Priorità arricchimento: ${qst.active} attive · lavoro ${enrichBurst} prima della prossima ricerca`;
+      const balanceMsg=qst.active>100
+        ? `Ricerca rallentata · ${qst.active} attive · ${enrichBurst} arricchimenti prima della prossima query`
+        : `Ricerca normale · ${qst.active} attive · 1 arricchimento prima della query`;
       if($("#webHarvestStatus"))$("#webHarvestStatus").textContent=balanceMsg;
       setCrawlerLive(balanceMsg,"busy");
       enrichPauseRequested=false;
@@ -16775,9 +16802,10 @@ async function startWebHarvest(auto=false){
       setCrawlerLive(msg,"busy");
       if($("#liveCrawlerAdded"))$("#liveCrawlerAdded").textContent=state.added||0;
 
-      // L'arricchimento viene bilanciato prima di ogni query in base alla sola coda attiva.
+      // V14: tra 101 e 300 attive rallenta anche il ritmo delle query.
       await updateHarvestUi();
-      await new Promise(r=>setTimeout(r,8500));
+      const postQueryStats=getEnrichmentQueueStats();
+      await new Promise(r=>setTimeout(r,postQueryStats.active>100?22000:8500));
     }catch(err){
       console.warn("Ricerca prospect:",task.query,err);
       state.errors=(state.errors||0)+1;

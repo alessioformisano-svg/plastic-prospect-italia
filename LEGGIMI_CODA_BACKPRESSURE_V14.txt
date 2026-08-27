@@ -1,0 +1,24 @@
+PLASTIC PROSPECT ITALIA - V14 CODA / BACKPRESSURE
+
+Questa release modifica SOLO il ritmo tra ricerca nuove aziende e arricchimento.
+Lo scraper Supabase non va aggiornato.
+
+LOGICA V14
+- Coda attiva > 300: lo scraping automatico si FERMA completamente. Zero nuove query.
+  Il sistema lavora sull'arricchimento e ricontrolla ogni 60 secondi.
+- Coda attiva da 101 a 300: lo scraping riparte lentamente.
+  Prima di ogni query vengono lavorate 2 aziende da arricchire e la pausa tra query aumenta.
+- Coda attiva da 1 a 100: ritmo normale, con 1 arricchimento prima della query.
+- Coda attiva = 0: ricerca normale.
+
+TENTATIVI
+- Restano massimo 3 tentativi automatici per azienda.
+- Dopo il 1° tentativo non risolutivo: retry dopo 2 ore.
+- Dopo il 2°: retry dopo 12 ore.
+- Dopo il 3°: l'azienda esce dalla coda attiva e passa tra le manuali/da verificare.
+- Le aziende in attesa e quelle manuali NON bloccano lo scraping.
+
+IMPORTANTE
+- Non modifica/cancella aziende esistenti.
+- Non resetta lo stato dei tentativi V13 già accumulato.
+- Non richiede modifiche a Supabase Edge Function.
