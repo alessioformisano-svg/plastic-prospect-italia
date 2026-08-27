@@ -14818,7 +14818,7 @@ window.DB_DATA = {
 const ORIGINAL = structuredClone(window.DB_DATA.records);
 const REGION_PROVINCES = window.DB_DATA.regionProvinces;
 const DB_NAME="plastic-prospect-italia", STORE="companies", META="meta";
-const SEED_VERSION=10, HARVEST_TARGET=2500, HARVEST_VERSION=19, ENRICH_VERSION=3;
+const SEED_VERSION=10, HARVEST_TARGET=2500, HARVEST_VERSION=19, ENRICH_VERSION=4;
 const SUPABASE_CFG=window.PLASTIC_SUPABASE||{};
 const ADMIN_ALIAS=String(SUPABASE_CFG.adminAlias||"AMMINISTRATORE").toUpperCase();
 const ADMIN_EMAIL=String(SUPABASE_CFG.adminEmail||"").toLowerCase();
@@ -15360,11 +15360,11 @@ function card(r){
   return `<article class="company-card"><div class="card-top"><div><h3>${esc(r.azienda)}</h3><div class="meta">${r.comune||r.provincia||r.regione?`${esc(r.comune)} · ${esc(r.provincia)} · ${esc(r.regione)}`:"Località da completare"}</div></div><div class="score">${r.priorita||0}</div></div>
   <div class="meta"><b>${esc(r.attivita||"Attività non classificata")}</b>${r.ateco?` · ATECO ${esc(r.ateco)}`:""}</div><div class="meta">${r.assegnato_a?`Assegnato a: <b>${esc(r.assegnato_a)}</b>`:"Non assegnato"}</div>
   <div class="tags">${tags(r.materiali).slice(0,8).map(t=>`<span class="tag">${esc(t)}</span>`).join("")}<span class="tag">${esc(r.esito_chiamata||"DA CONTATTARE")}</span></div>
-  <div class="card-actions">${r.telefono?`<a href="tel:${esc(r.telefono.replace(/\s/g,""))}">☎ Chiama</a>`:`<a target="_blank" rel="noopener" href="${googleContactUrl(r)}">🔎 Cerca contatti</a>`}${r.sito?`<a target="_blank" rel="noopener" href="${esc(r.sito)}">🌐 Sito</a>`:""}${r.email?`<a href="mailto:${esc(r.email)}">✉ Email</a>`:""}<button onclick='openDetail(${JSON.stringify(r._id)})'>Dettagli</button><button class="fav ${fav?"active":""}" onclick='toggleFav(${JSON.stringify(r._id)})'>${fav?"★ Preferita":"☆ Preferita"}</button><button onclick='editRecord(${JSON.stringify(r._id)})'>Modifica</button></div></article>`
+  <div class="card-actions">${r.telefono?`<a href="tel:${esc(r.telefono.replace(/\s/g,""))}">☎ Chiama</a>`:`<button onclick='enrichSingleRecord(${JSON.stringify(r._id)})'>🔎 Completa dati</button>`}${r.sito?`<a target="_blank" rel="noopener" href="${esc(r.sito)}">🌐 Sito</a>`:""}${r.email?`<a href="mailto:${esc(r.email)}">✉ Email</a>`:""}<button onclick='openDetail(${JSON.stringify(r._id)})'>Dettagli</button><button class="fav ${fav?"active":""}" onclick='toggleFav(${JSON.stringify(r._id)})'>${fav?"★ Preferita":"☆ Preferita"}</button><button onclick='editRecord(${JSON.stringify(r._id)})'>Modifica</button></div></article>`
 }
 function renderResults(){
   const arr=filtered();$("#resultCount").textContent=arr.length;$("#cards").innerHTML=arr.length?arr.map(card).join(""):`<div class="empty">Nessuna azienda con questi filtri.</div>`;
-  $("#tableBody").innerHTML=arr.map(r=>`<tr><td><b>${esc(r.azienda)}</b></td><td>${esc(r.comune)} (${esc(r.provincia)})<br><span class="meta">${esc(r.regione)}</span></td><td>${esc(r.attivita)}</td><td>${esc(r.interesse||r.materiali||"-")}</td><td>${r.telefono?`<a href="tel:${esc(r.telefono.replace(/\s/g,""))}">${esc(r.telefono)}</a>`:`<a target="_blank" rel="noopener" href="${googleContactUrl(r)}">Cerca contatti</a>`}</td><td>${r.sito?`<a target="_blank" rel="noopener" href="${esc(r.sito)}">Sito web</a><br>`:""}${r.email?`<a href="mailto:${esc(r.email)}">${esc(r.email)}</a>`:`<span class="meta">email da trovare</span>`}</td><td><span class="score">${r.priorita||0}</span></td><td>${esc(r.assegnato_a||"-")}</td><td>${esc(r.chiamato_da||"-")}</td><td>${esc(r.data_chiamata||"-")}</td><td><span class="tag">${esc(r.esito_chiamata||"DA CONTATTARE")}</span></td><td><button class="btn" onclick='openDetail(${JSON.stringify(r._id)})'>Apri</button></td></tr>`).join("")
+  $("#tableBody").innerHTML=arr.map(r=>`<tr><td><b>${esc(r.azienda)}</b></td><td>${esc(r.comune)} (${esc(r.provincia)})<br><span class="meta">${esc(r.regione)}</span></td><td>${esc(r.attivita)}</td><td>${esc(r.interesse||r.materiali||"-")}</td><td>${r.telefono?`<a href="tel:${esc(r.telefono.replace(/\s/g,""))}">${esc(r.telefono)}</a>`:`<button class="btn" onclick='enrichSingleRecord(${JSON.stringify(r._id)})'>Completa dati</button>`}</td><td>${r.sito?`<a target="_blank" rel="noopener" href="${esc(r.sito)}">Sito web</a><br>`:""}${r.email?`<a href="mailto:${esc(r.email)}">${esc(r.email)}</a>`:`<span class="meta">email da trovare</span>`}</td><td><span class="score">${r.priorita||0}</span></td><td>${esc(r.assegnato_a||"-")}</td><td>${esc(r.chiamato_da||"-")}</td><td>${esc(r.data_chiamata||"-")}</td><td><span class="tag">${esc(r.esito_chiamata||"DA CONTATTARE")}</span></td><td><button class="btn" onclick='openDetail(${JSON.stringify(r._id)})'>Apri</button></td></tr>`).join("")
 }
 $$(".mode").forEach(b=>b.onclick=()=>{mode=b.dataset.mode;$$(".mode").forEach(x=>x.classList.toggle("active",x===b));$("#cards").classList.toggle("hidden",mode!=="cards");$("#tableWrap").classList.toggle("hidden",mode!=="table")});
 
@@ -15392,8 +15392,8 @@ function renderDashboard(){
 window.openDetail=id=>{
   const r=records.find(x=>x._id===id);if(!r)return;
   $("#detailContent").innerHTML=`<div class="modal-head"><div><p class="eyebrow">${esc(r.regione)} · ${esc(r.provincia)}</p><h2>${esc(r.azienda)}</h2></div><button class="icon-btn" onclick="detailModal.close()">×</button></div>
-  <div class="detail-grid"><div class="detail-box"><b>Località / sede</b>${r.comune||r.provincia||r.regione?`${esc(r.comune)} (${esc(r.provincia)}) · ${esc(r.regione)}${r.indirizzo?`<br><small>${esc(r.indirizzo)}</small>`:""}`:"Da completare"}</div><div class="detail-box"><b>Telefono</b>${r.telefono?`<a href="tel:${esc(r.telefono.replace(/\s/g,""))}">${esc(r.telefono)}</a>`:`<a target="_blank" rel="noopener" href="${googlePhoneUrl(r)}">Cerca contatti su Google</a>`}</div>
-  <div class="detail-box"><b>Email / PEC</b>${r.email?`<a href="mailto:${esc(r.email)}">${esc(r.email)}</a>`:"-"}<br>${esc(r.pec||"")}</div><div class="detail-box"><b>Sito web</b>${r.sito?`<a target="_blank" rel="noopener" href="${esc(r.sito)}">${esc(r.sito)}</a>`:`<a target="_blank" rel="noopener" href="${googleContactUrl(r)}">Cerca contatti</a>`}</div><div class="detail-box"><b>P.IVA / CF / REA</b>${esc(r.partita_iva||"-")}<br>${esc(r.codice_fiscale||"")} ${esc(r.rea||"")}</div>
+  <div class="detail-grid"><div class="detail-box"><b>Località / sede</b>${r.comune||r.provincia||r.regione?`${esc(r.comune)} (${esc(r.provincia)}) · ${esc(r.regione)}${r.indirizzo?`<br><small>${esc(r.indirizzo)}</small>`:""}`:"Da completare"}</div><div class="detail-box"><b>Telefono</b>${r.telefono?`<a href="tel:${esc(r.telefono.replace(/\s/g,""))}">${esc(r.telefono)}</a>`:`<button class="btn" onclick='enrichSingleRecord(${JSON.stringify(r._id)})'>Completa automaticamente</button> <a target="_blank" rel="noopener" href="${googlePhoneUrl(r)}">Google</a>`}</div>
+  <div class="detail-box"><b>Email / PEC</b>${r.email?`<a href="mailto:${esc(r.email)}">${esc(r.email)}</a>`:"-"}<br>${esc(r.pec||"")}</div><div class="detail-box"><b>Sito web</b>${r.sito?`<a target="_blank" rel="noopener" href="${esc(r.sito)}">${esc(r.sito)}</a>`:`<button class="btn" onclick='enrichSingleRecord(${JSON.stringify(r._id)})'>Trova sito e contatti</button> <a target="_blank" rel="noopener" href="${googleContactUrl(r)}">Google</a>`}</div><div class="detail-box"><b>P.IVA / CF / REA</b>${esc(r.partita_iva||"-")}<br>${esc(r.codice_fiscale||"")} ${esc(r.rea||"")}</div>
   <div class="detail-box"><b>Attività / ATECO</b>${esc(r.attivita)}${r.ateco?`<br>${esc(r.ateco)}`:""}</div><div class="detail-box"><b>Priorità / Stato</b><span class="score">${r.priorita||0}/100</span><br>${esc(r.stato||"")}</div>
   <div class="detail-box"><b>Materiali potenziali</b>${esc(r.materiali||"-")}</div><div class="detail-box"><b>Campo di utilizzo</b>${esc(r.interesse||r.note||"-")}</div>
   <div class="detail-box"><b>Assegnato a</b>${esc(r.assegnato_a||"-")}</div><div class="detail-box"><b>Chiamato da</b>${esc(r.chiamato_da||"-")}<br><small>${esc(r.data_chiamata||"")}</small></div>
@@ -15670,6 +15670,33 @@ async function enrichRecord(r){
   }
   return false;
 }
+
+async function enrichSingleRecord(id){
+  const r=records.find(x=>x._id===id);
+  if(!r)return;
+  const before=missingContactCount(r);
+  const label=r.azienda||"azienda";
+  if($("#enrichWebStatus"))$("#enrichWebStatus").textContent=`Ricerca immediata: ${label}...`;
+  try{
+    const changed=await enrichRecord(r);
+    if(changed)await reload();
+    const updated=records.find(x=>x._id===id)||r;
+    const after=missingContactCount(updated);
+    if(changed || after<before){
+      alert(`Dati aggiornati per ${label}. Campi mancanti: ${before} → ${after}.`);
+      openDetail(id);
+      return;
+    }
+    alert(`Non ho trovato automaticamente nuovi dati affidabili per ${label}. Apro Google come controllo manuale.`);
+    window.open(googleContactUrl(r),"_blank","noopener");
+  }catch(err){
+    console.warn("Arricchimento singolo",label,err);
+    alert(`Ricerca automatica non completata per ${label}. Apro Google come controllo manuale.`);
+    window.open(googleContactUrl(r),"_blank","noopener");
+  }
+}
+window.enrichSingleRecord=enrichSingleRecord;
+
 async function runEnrichmentPass(limit=1){
   let done=0,changed=0;
   const state=(await metaGet("smartEnrichmentState"))||{version:ENRICH_VERSION,doneIds:[]};

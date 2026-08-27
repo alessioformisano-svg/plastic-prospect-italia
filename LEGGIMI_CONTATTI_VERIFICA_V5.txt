@@ -1,0 +1,14 @@
+RELEASE CONTATTI / VERIFICA V5
+
+1) Il pulsante "Cerca contatti" diventa "Completa dati" e prova subito a:
+   - trovare il sito ufficiale
+   - leggere homepage e pagine contatti
+   - estrarre telefono, email, sito, indirizzo, CAP, comune, provincia, regione, P.IVA
+   - salvare i dati trovati nel database
+   Se non trova dati affidabili, apre Google come controllo manuale.
+
+2) L'arricchimento automatico viene riavviato (ENRICH_VERSION 4), così le aziende incomplete vengono ricontrollate.
+
+3) Incluso lo scraper Supabase V7 con filtro anti-località/indirizzo. Va copiato nel file index.ts della Edge Function "plastic-scraper" e pubblicato con Deploy updates.
+
+4) Nessuna azienda viene eliminata automaticamente solo perché sul sito non compaiono parole plastiche: prima si arricchiscono i dati, poi si può validare il target senza rischiare di cancellare clienti reali.
