@@ -1,0 +1,11 @@
+PLASTIC PROSPECT ITALIA - V8
+
+MODIFICHE:
+1) Scraper: pulizia definitiva dei candidati generati da pagine tipo Orari di apertura / Contatti / Mappa.
+2) Deduplica: "Incisioni Morlacchi" e "Incisioni Morlacchi, Orio al Serio" vengono ricondotte alla stessa azienda.
+3) Dashboard: nuovo indicatore live "Arricchimento: X/Y complete · Z in coda".
+4) L'arricchimento automatico continua una azienda per ciclo, senza lanciare richieste massive.
+
+INSTALLAZIONE:
+- GitHub/Netlify: caricare tutti i file della release.
+- Supabase Edge Function plastic-scraper: sostituire index.ts con SUPABASE_EDGE_FUNCTION_plastic-scraper_V8.ts e fare Deploy updates.

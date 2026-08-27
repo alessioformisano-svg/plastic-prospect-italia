@@ -1,0 +1,18 @@
+PLASTIC PROSPECT ITALIA - V12 VALIDAZIONE IDENTITA + QUARANTENA
+
+COSA CAMBIA
+1) Prima di salvare una nuova azienda trovata dal web, il frontend verifica che il risultato abbia una reale identita aziendale.
+2) Vengono scartati prima del salvataggio risultati costituiti solo da localita, materiali, categorie o indirizzi (es. Bergamo, Brescia, Forex, incisioni Bergamo).
+3) I casi ambigui vengono verificati sul sito tramite la Edge Function prima del salvataggio: dominio coerente, ragione sociale, P.IVA, telefono, email, indirizzo e presenza del brand fanno punteggio di identita.
+4) I record sospetti gia presenti NON vengono cancellati: se mai lavorati da un operatore vengono marcati AUTO-VERIFICA, portati a priorita max 45 e mostrati con badge DA VERIFICARE.
+5) Record gia lavorati, clienti, note operatore, chiamate e preferiti non vengono toccati dalla quarantena automatica.
+6) Titoli SEO con entita HTML e casi tipo "Dell'Acqua, Lavorazione plexiglas..." vengono ripuliti.
+7) Nel filtro Completezza dati compare "Da verificare identita" per isolare i record in quarantena.
+
+IMPORTANTE
+Questa release modifica il frontend/Netlify. NON e necessario aggiornare Supabase Edge Function per applicare la V12.
+Il file SUPABASE_EDGE_FUNCTION_plastic-scraper_CURRENT_V11.ts e incluso solo come copia di riferimento della funzione attualmente usata.
+
+METODO
+Ricerca grezza -> normalizzazione -> verifica identita azienda -> arricchimento minimo -> salvataggio.
+I vecchi dubbi: conservazione -> quarantena -> verifica manuale/arricchimento, mai cancellazione automatica se potenzialmente lavorati.

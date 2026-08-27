@@ -101,6 +101,7 @@ body[data-role="user"] .admin-only{display:none!important}
 
 .crawler-mode{padding:3px 7px;border-radius:999px;background:#111;color:#ffd200;font-size:10px;font-weight:900;text-transform:uppercase}
 .detail-box small{line-height:1.45}.enrich-auto-note{font-weight:700;color:#7a5e00}
+.crawler-enrich{display:inline-flex;align-items:center;margin-left:10px;padding:4px 8px;border-radius:999px;background:#fff7cf;border:1px solid #e4c94d;font-size:12px;font-weight:800;white-space:nowrap}
 </style>
 </head>
 <body>
@@ -174,7 +175,7 @@ body[data-role="user"] .admin-only{display:none!important}
           <div>
             <span class="crawler-dot"></span>
             <b>RICERCA AZIENDE AUTOMATICA</b><span id="crawlerModeLabel" class="crawler-mode">PRIORITÀ LOMBARDIA · PIEMONTE · TOSCANA · LAZIO · CAMPANIA</span>
-            <span id="liveCrawlerStatus">Avvio ricerca...</span>
+            <span id="liveCrawlerStatus">Avvio ricerca...</span><span id="liveEnrichmentStatus" class="crawler-enrich">Arricchimento: calcolo...</span>
           </div>
           <div class="crawler-live-right">
             <span><b id="liveCrawlerAdded">0</b> nuove questa scansione</span>
@@ -233,6 +234,7 @@ body[data-role="user"] .admin-only{display:none!important}
             <option value="missing-email">Senza email</option>
             <option value="missing-site">Senza sito</option>
             <option value="missing-location">Senza località/regione</option>
+            <option value="identity-review">⚠ Da verificare identità</option>
           </select></div>
           <div><label>Telefono</label><select id="phoneFilter">
             <option value="">Tutti</option>
@@ -14818,7 +14820,7 @@ window.DB_DATA = {
 const ORIGINAL = structuredClone(window.DB_DATA.records);
 const REGION_PROVINCES = window.DB_DATA.regionProvinces;
 const DB_NAME="plastic-prospect-italia", STORE="companies", META="meta";
-const SEED_VERSION=10, HARVEST_TARGET=2500, HARVEST_VERSION=19, ENRICH_VERSION=4;
+const SEED_VERSION=10, HARVEST_TARGET=2500, HARVEST_VERSION=19, ENRICH_VERSION=5;
 const SUPABASE_CFG=window.PLASTIC_SUPABASE||{};
 const ADMIN_ALIAS=String(SUPABASE_CFG.adminAlias||"AMMINISTRATORE").toUpperCase();
 const ADMIN_EMAIL=String(SUPABASE_CFG.adminEmail||"").toLowerCase();
@@ -15037,6 +15039,10 @@ async function metaSet(key,value){
 function cleanSerpTitle(name){
   let raw=String(name||"").replace(/\s+/g," ").trim();
   if(!raw)return "";
+  raw=raw
+    .replace(/&#x([0-9a-f]+);/gi,(_,h)=>String.fromCodePoint(parseInt(h,16)))
+    .replace(/&#(\d+);/g,(_,n)=>String.fromCodePoint(Number(n)))
+    .replace(/&amp;/gi,"&").replace(/&quot;/gi,'"').replace(/&apos;|&#39;/gi,"'").replace(/&lt;/gi,"<").replace(/&gt;/gi,">");
 
   // I Reader di Bing/DuckDuckGo/Google restituiscono spesso il titolo in Markdown.
   // Il Markdown di presentazione viene rimosso, non usato come motivo di scarto.
@@ -15098,6 +15104,93 @@ function invalidProspectResult(hit){
   if(/\b(phone|address|email|matches|people|person|resident|village|campus|office locations?)\b/i.test(title) && !/\b(srl|srls|spa|snc|sas)\b/i.test(title))return true;
   return false;
 }
+
+const AUTO_VERIFY_PREFIX="AUTO-VERIFICA:";
+
+function companyWasWorked(r){
+  const outcome=String(r?.esito_chiamata||r?.stato||"").trim().toUpperCase();
+  return !!(r?.favorite || r?.chiamato_da || r?.data_chiamata || r?.note_chiamata || r?.assegnato_a ||
+    (outcome && !["DA CONTATTARE","NON ASSEGNATO"].includes(outcome)) ||
+    (String(r?.note||"").trim() && !String(r.note||"").startsWith(AUTO_VERIFY_PREFIX)));
+}
+
+function knownLocationNames(){
+  if(window.__knownPlasticLocations)return window.__knownPlasticLocations;
+  const set=new Set();
+  for(const r of Object.keys(REGION_PROVINCES||{})) set.add(normalize(r));
+  if(typeof PROVINCE_NAMES!=="undefined"){
+    for(const v of Object.values(PROVINCE_NAMES||{})) set.add(normalize(v));
+    for(const k of Object.keys(PROVINCE_NAMES||{})) set.add(normalize(k));
+  }
+  window.__knownPlasticLocations=set;
+  return set;
+}
+const GENERIC_STANDALONE_NAMES=new Set([
+  "forex","plexiglass","plexiglas","pmma","pvc","petg","policarbonato","policarbonate","plastica","plastiche","materie plastiche",
+  "incisioni","insegne","serigrafia","stampa digitale","automazione","meccanica","lavorazioni","lavorazione","allestimenti","espositori"
+].map(normalize));
+
+function nonCompanyIdentityReason(name,task={}){
+  const clean=cleanSerpTitle(name).replace(/[,;]+$/g,"").trim();
+  const n=normalize(clean);
+  if(!n)return "nome vuoto";
+  if(knownLocationNames().has(n))return "solo località/provincia";
+  if(task?.localita && n===normalize(task.localita))return "solo località della ricerca";
+  if(GENERIC_STANDALONE_NAMES.has(n))return "solo materiale/attività generica";
+  if(/^(?:incisioni?|lavorazioni?|lavorazione|insegne|serigrafia|stampa|allestimenti|plastica|plastiche|materie plastiche)\s+(?:a|in|di)?\s*[a-zà-ÿ' -]{2,60}$/i.test(clean)){
+    const tail=normalize(clean.replace(/^(?:incisioni?|lavorazioni?|lavorazione|insegne|serigrafia|stampa|allestimenti|plastica|plastiche|materie plastiche)\s+(?:a|in|di)?\s*/i,""));
+    if(knownLocationNames().has(tail) || (task?.localita && tail===normalize(task.localita)))return "attività + località, non ragione sociale";
+  }
+  if(/^(?:azienda|aziende|impresa|imprese|ditta|ditte)\b/i.test(clean) && !/\b(?:srl|srls|spa|snc|sas)\b/i.test(clean))return "titolo categoria/SEO";
+  if(/\b(?:via|viale|piazza|corso|strada|località|loc\.)\b/i.test(clean) && /\b\d{1,4}\b/.test(clean))return "indirizzo, non azienda";
+  return "";
+}
+
+function meaningfulBrandTokens(name){
+  const stop=new Set(["srl","srls","spa","snc","sas","societa","italia","italy","group","gruppo","azienda","industrie","industria","di","del","della","dei","e","and"]);
+  return normalize(name).split(/\s+/).filter(x=>x.length>=3&&!stop.has(x)&&!knownLocationNames().has(x)&&!GENERIC_STANDALONE_NAMES.has(x));
+}
+function officialHostOverlap(name,url){
+  try{
+    const host=normalize(new URL(url).hostname.replace(/^www\./,"").split(".")[0]);
+    return meaningfulBrandTokens(name).some(t=>host.includes(t)||t.includes(host));
+  }catch{return false}
+}
+function identityEvidenceScore(name,url,contact={},hit={}){
+  let score=0;
+  if(/\b(?:s\.?\s*r\.?\s*l\.?|srls|s\.?\s*p\.?\s*a\.?|s\.?\s*n\.?\s*c\.?|snc|s\.?\s*a\.?\s*s\.?|sas)\b/i.test(name))score+=3;
+  if(officialHostOverlap(name,url))score+=3;
+  if(contact.partita_iva)score+=4;
+  if(contact.telefono)score+=2;
+  if(contact.email)score+=2;
+  if(contact.indirizzo)score+=1;
+  if(Number(hit?.score)>=18)score+=1;
+  return score;
+}
+
+async function validateProspectIdentity(hit,azienda,contact,task){
+  const reason=nonCompanyIdentityReason(azienda,task);
+  if(reason)return {ok:false,reason};
+  let score=identityEvidenceScore(azienda,hit.url,contact,hit);
+  if(score>=4)return {ok:true,score,contact};
+  try{
+    if(!searchHostBlocked(hit.url)){
+      const data=await edgeInvoke("fetch",{url:hit.url});
+      const page=String(data?.text||"");
+      if(page){
+        const extra=extractContactData(page,hit.url);
+        const tokens=meaningfulBrandTokens(azienda);
+        const pageNorm=normalize(page.slice(0,220000));
+        const brandOnPage=tokens.length?tokens.some(t=>pageNorm.includes(t)):false;
+        score=identityEvidenceScore(azienda,hit.url,{...contact,...extra},hit)+(brandOnPage?2:0);
+        if(score>=4)return {ok:true,score,contact:{...contact,...extra}};
+      }
+    }
+  }catch(err){console.warn("Verifica identità prospect",azienda,err)}
+  return {ok:false,reason:"identità aziendale non confermata",score};
+}
+
+function isAutoQuarantined(r){return String(r?.note||"").startsWith(AUTO_VERIFY_PREFIX)}
 
 function canonical(r){
   const o={
@@ -15161,6 +15254,13 @@ async function bootstrapData(){
       console.info(`Pulizia nomi prospect: ${cleanResult.deleted} eliminati, ${cleanResult.renamed} rinominati, ${cleanResult.rescored} score normalizzati.`);
     }
   }catch(err){console.error("Pulizia nomi prospect annullata",err);}
+
+  // Quarantena NON distruttiva: città, materiali e titoli generici già presenti
+  // vengono conservati ma abbassati di priorità e marcati "DA VERIFICARE".
+  try{
+    const qr=await quarantineSuspiciousExistingOnce();
+    if(qr.quarantined||qr.renamed)console.info(`Verifica identità DB: ${qr.quarantined} sospetti messi in quarantena, ${qr.renamed} titoli ripuliti.`);
+  }catch(err){console.error("Quarantena prospect sospetti annullata",err)}
 
   // Poi deduplica FISICAMENTE il database sui nomi già normalizzati.
   // Salva sempre prima il record unificato e cancella le copie solo dopo upsert riuscito.
@@ -15350,7 +15450,8 @@ function filtered(){
       (dataFilter==="missing-phone"&&!String(r.telefono||"").trim())||
       (dataFilter==="missing-email"&&!String(r.email||"").trim())||
       (dataFilter==="missing-site"&&!String(r.sito||"").trim())||
-      (dataFilter==="missing-location"&&(!r.regione||!r.provincia||!r.comune)))
+      (dataFilter==="missing-location"&&(!r.regione||!r.provincia||!r.comune))||
+      (dataFilter==="identity-review"&&isAutoQuarantined(r)))
     &&(!phone||(phone==="yes"?!!String(r.telefono||"").trim():!String(r.telefono||"").trim()))
     &&(!operator||(r.chiamato_da||"")===operator)&&(!assigned||(r.assegnato_a||"")===assigned)&&dashboardCaseMatch(r);
   });
@@ -15359,7 +15460,7 @@ function card(r){
   const fav=!!r.favorite;
   return `<article class="company-card"><div class="card-top"><div><h3>${esc(r.azienda)}</h3><div class="meta">${r.comune||r.provincia||r.regione?`${esc(r.comune)} · ${esc(r.provincia)} · ${esc(r.regione)}`:"Località da completare"}</div></div><div class="score">${r.priorita||0}</div></div>
   <div class="meta"><b>${esc(r.attivita||"Attività non classificata")}</b>${r.ateco?` · ATECO ${esc(r.ateco)}`:""}</div><div class="meta">${r.assegnato_a?`Assegnato a: <b>${esc(r.assegnato_a)}</b>`:"Non assegnato"}</div>
-  <div class="tags">${tags(r.materiali).slice(0,8).map(t=>`<span class="tag">${esc(t)}</span>`).join("")}<span class="tag">${esc(r.esito_chiamata||"DA CONTATTARE")}</span></div>
+  <div class="tags">${isAutoQuarantined(r)?`<span class="tag" style="font-weight:900">⚠ DA VERIFICARE</span>`:""}${tags(r.materiali).slice(0,8).map(t=>`<span class="tag">${esc(t)}</span>`).join("")}<span class="tag">${esc(r.esito_chiamata||"DA CONTATTARE")}</span></div>
   <div class="card-actions">${r.telefono?`<a href="tel:${esc(r.telefono.replace(/\s/g,""))}">☎ Chiama</a>`:`<button onclick='enrichSingleRecord(${JSON.stringify(r._id)})'>🔎 Completa dati</button>`}${r.sito?`<a target="_blank" rel="noopener" href="${esc(r.sito)}">🌐 Sito</a>`:""}${r.email?`<a href="mailto:${esc(r.email)}">✉ Email</a>`:""}<button onclick='openDetail(${JSON.stringify(r._id)})'>Dettagli</button><button class="fav ${fav?"active":""}" onclick='toggleFav(${JSON.stringify(r._id)})'>${fav?"★ Preferita":"☆ Preferita"}</button><button onclick='editRecord(${JSON.stringify(r._id)})'>Modifica</button></div></article>`
 }
 function renderResults(){
@@ -15384,7 +15485,7 @@ function renderDashboard(){
   const withSite=records.filter(r=>String(r.sito||"").trim()).length,withEmail=records.filter(r=>String(r.email||"").trim()).length,noRegion=records.filter(r=>!String(r.regione||"").trim()).length;
   if($("#kpiWithSite"))$("#kpiWithSite").textContent=withSite;
   if($("#kpiWithEmail"))$("#kpiWithEmail").textContent=withEmail;
-  if($("#kpiNoRegion"))$("#kpiNoRegion").textContent=noRegion;const incomplete=records.filter(r=>missingContactCount(r)>0).length;if($("#kpiIncomplete"))$("#kpiIncomplete").textContent=incomplete;
+  if($("#kpiNoRegion"))$("#kpiNoRegion").textContent=noRegion;const incomplete=records.filter(r=>missingContactCount(r)>0).length;if($("#kpiIncomplete"))$("#kpiIncomplete").textContent=incomplete;updateEnrichmentProgress();
   const counts={};records.forEach(r=>{if(r.regione)counts[r.regione]=(counts[r.regione]||0)+1});const entries=Object.entries(counts).sort((a,b)=>b[1]-a[1]),max=Math.max(...entries.map(x=>x[1]),1);
   $("#regionBars").innerHTML=entries.map(([n,c])=>`<div class="bar-row bar-click" role="button" tabindex="0" onclick='openDashboardCase("region",${JSON.stringify(n)})' onkeydown='if(event.key==="Enter"||event.key===" "){event.preventDefault();openDashboardCase("region",${JSON.stringify(n)})}'><span>${esc(n)}</span><div class="bar-track"><div class="bar-fill" style="width:${c/max*100}%"></div></div><b>${c}</b></div>`).join("")+(noRegion?`<div class="bar-row pending-region bar-click" role="button" tabindex="0" onclick='openDashboardCase("no-region")'><span>DA GEOLOCALIZZARE</span><div class="bar-track"><div class="bar-fill" style="width:${Math.min(100,noRegion/max*100)}%"></div></div><b>${noRegion}</b></div>`:"");
   $("#coverageBadge").textContent=`${entries.length}/20 regioni · totale ${records.length}`;const topValid=records.filter(r=>!invalidCompanyName(r.azienda)&&!((r.fonte||r.sito)&&invalidProspectResult({title:r.azienda,url:r.fonte||r.sito})));$("#topList").innerHTML=[...topValid].sort((a,b)=>(b.priorita||0)-(a.priorita||0)).slice(0,8).map(r=>`<div class="top-item top-click" role="button" tabindex="0" onclick='openDetail(${JSON.stringify(r._id)})'><div><b>${esc(r.azienda)}</b><div class="meta">${esc(r.regione)} · ${esc(r.attivita)}</div></div><span class="score">${r.priorita||0}</span></div>`).join("")
@@ -15618,6 +15719,16 @@ function missingContactCount(r){
   return ["telefono","email","sito","comune","provincia","regione","indirizzo"]
     .reduce((n,f)=>n+(!String(r[f]||"").trim()?1:0),0);
 }
+function updateEnrichmentProgress(){
+  const total=records.length;
+  const incomplete=records.filter(r=>missingContactCount(r)>0).length;
+  const complete=Math.max(0,total-incomplete);
+  if($("#liveEnrichmentStatus")){
+    $("#liveEnrichmentStatus").textContent=`Arricchimento: ${complete}/${total} complete · ${incomplete} in coda`;
+  }
+  return {total,complete,incomplete};
+}
+
 const ENRICH_REGION_ORDER=["Lombardia","Piemonte","Toscana","Lazio","Campania"];
 function enrichmentSort(a,b){
   const ia=ENRICH_REGION_ORDER.indexOf(a.regione),ib=ENRICH_REGION_ORDER.indexOf(b.regione);
@@ -15735,6 +15846,7 @@ async function runEnrichmentPass(limit=1){
   if(changed)await reload();
   if($("#enrichWebStatus")){
     $("#enrichWebStatus").textContent=`Completamento: ${changed} aziende aggiornate su ${done} controllate · restano ${records.filter(r=>missingContactCount(r)>0).length} incomplete`;
+    updateEnrichmentProgress();
   }
   return changed;
 }
@@ -15758,6 +15870,7 @@ async function startEnrichment(auto=false){
   enrichRunning=false;
   if($("#enrichWebStatus")){
     $("#enrichWebStatus").textContent=`Arricchimento pronto · ${totalChanged} aggiornamenti in questa sessione`;
+    updateEnrichmentProgress();
   }
 }
 function pauseEnrichment(){
@@ -15769,7 +15882,7 @@ if($("#enrichWebPause"))$("#enrichWebPause").onclick=pauseEnrichment;
 
 
 // =====================================================================
-// RICERCA WEB PROSPECT V7 - regioni/province x settori
+// RICERCA WEB PROSPECT V8 - regioni/province x settori
 // =====================================================================
 const PROVINCE_NAMES = {"AG": "Agrigento", "AL": "Alessandria", "AN": "Ancona", "AO": "Aosta", "AP": "Ascoli Piceno", "AQ": "L'Aquila", "AR": "Arezzo", "AT": "Asti", "AV": "Avellino", "BA": "Bari", "BG": "Bergamo", "BI": "Biella", "BL": "Belluno", "BN": "Benevento", "BO": "Bologna", "BR": "Brindisi", "BS": "Brescia", "BT": "Barletta Andria Trani", "BZ": "Bolzano", "CA": "Cagliari", "CB": "Campobasso", "CE": "Caserta", "CH": "Chieti", "CL": "Caltanissetta", "CN": "Cuneo", "CO": "Como", "CR": "Cremona", "CS": "Cosenza", "CT": "Catania", "CZ": "Catanzaro", "EN": "Enna", "FC": "Forlì Cesena", "FE": "Ferrara", "FG": "Foggia", "FI": "Firenze", "FM": "Fermo", "FR": "Frosinone", "GE": "Genova", "GO": "Gorizia", "GR": "Grosseto", "IM": "Imperia", "IS": "Isernia", "KR": "Crotone", "LC": "Lecco", "LE": "Lecce", "LI": "Livorno", "LO": "Lodi", "LT": "Latina", "LU": "Lucca", "MB": "Monza Brianza", "MC": "Macerata", "ME": "Messina", "MI": "Milano", "MN": "Mantova", "MO": "Modena", "MS": "Massa Carrara", "MT": "Matera", "NA": "Napoli", "NO": "Novara", "NU": "Nuoro", "OR": "Oristano", "PA": "Palermo", "PC": "Piacenza", "PD": "Padova", "PE": "Pescara", "PG": "Perugia", "PI": "Pisa", "PN": "Pordenone", "PO": "Prato", "PR": "Parma", "PT": "Pistoia", "PU": "Pesaro Urbino", "PV": "Pavia", "PZ": "Potenza", "RA": "Ravenna", "RC": "Reggio Calabria", "RE": "Reggio Emilia", "RG": "Ragusa", "RI": "Rieti", "RM": "Roma", "RN": "Rimini", "RO": "Rovigo", "SA": "Salerno", "SI": "Siena", "SO": "Sondrio", "SP": "La Spezia", "SR": "Siracusa", "SS": "Sassari", "SU": "Sud Sardegna", "SV": "Savona", "TA": "Taranto", "TE": "Teramo", "TN": "Trento", "TO": "Torino", "TP": "Trapani", "TR": "Terni", "TS": "Trieste", "TV": "Treviso", "UD": "Udine", "VA": "Varese", "VB": "Verbano Cusio Ossola", "VC": "Vercelli", "VE": "Venezia", "VI": "Vicenza", "VR": "Verona", "VT": "Viterbo", "VV": "Vibo Valentia"};
 
@@ -15945,6 +16058,10 @@ function canonicalCompanyNameFromSearchTitle(title){
       else if(!genericProspectPhrase(parts[parts.length-1]))t=parts[parts.length-1];
     }
   }
+
+  // Titolo SEO con virgola: "Dell'Acqua, Lavorazione plexiglas ..." -> "Dell'Acqua".
+  const commaBrand=t.match(/^(.{2,70}?),\s*(?:lavorazione|lavorazioni|produzione|fabbricazione|incisioni?|insegne|serigrafia|stampa|materie plastiche|plexiglas|plexiglass|policarbonato)\b/i);
+  if(commaBrand && !genericProspectPhrase(commaBrand[1])) t=commaBrand[1].trim();
 
   // Se il blocco scelto contiene la forma legale, tronca eventuali metadati successivi.
   const legal=t.match(/^(.{2,95}?\b(?:S\.?\s*R\.?\s*L\.?|SRLS|S\.?\s*P\.?\s*A\.?|SNC|S\.?\s*N\.?\s*C\.?|SAS|S\.?\s*A\.?\s*S\.?))\b/i);
@@ -16282,7 +16399,13 @@ async function mergeSearchResults(results,task){
     const azienda=edgeTrusted?edgeCandidateCompanyName(hit.title):candidateCompanyName(hit.title,hit.url);
     if(!azienda)continue;
 
-    const contact=extractContactData(`${hit.description||""}\n${hit.content||""}`,hit.url);
+    let contact=extractContactData(`${hit.description||""}\n${hit.content||""}`,hit.url);
+    const identity=await validateProspectIdentity(hit,azienda,contact,task);
+    if(!identity.ok){
+      console.info(`Prospect scartato prima del salvataggio: ${azienda} (${identity.reason||"identità non confermata"})`);
+      continue;
+    }
+    contact={...contact,...(identity.contact||{})};
     let sito="";
     try{sito=new URL(hit.url).origin+"/"}catch{}
 
@@ -16437,6 +16560,7 @@ async function mergeWebCandidates(cands){
   const names=new Set(all.map(r=>companyIdentityKey(r.azienda)||normalize(r.azienda)).filter(Boolean));
   const batch=[]; let added=0;
   for(const c of cands){
+    if(nonCompanyIdentityReason(c.azienda,{}))continue;
     const n=companyIdentityKey(c.azienda)||normalize(c.azienda); if(!n||names.has(n))continue;
     const rec=canonical(c); batch.push(rec);names.add(n);added++;
   }
@@ -16479,6 +16603,31 @@ async function cleanupGenericProspectsOnce(){
   if(deleteIds.filter(Boolean).length)await idbDeleteMany(deleteIds.filter(Boolean));
   await metaSet("genericNameCleanupVersion",GENERIC_NAME_CLEANUP_VERSION);
   return {deleted:deleteIds.filter(Boolean).length,renamed,rescored};
+}
+
+const AUTO_QUARANTINE_VERSION=1;
+async function quarantineSuspiciousExistingOnce(){
+  const done=Number(await metaGet("autoQuarantineVersion")||0);
+  if(done>=AUTO_QUARANTINE_VERSION)return {quarantined:0,renamed:0};
+  const all=await rawGetAllForPhysicalDedup();
+  const updates=[]; let quarantined=0,renamed=0;
+  for(const raw of all){
+    const r=canonicalPreserveExistingId(raw);
+    if(companyWasWorked(r))continue;
+    const oldName=String(r.azienda||"").trim();
+    const cleaned=canonicalCompanyNameFromSearchTitle(oldName);
+    if(cleaned && cleaned!==oldName && !nonCompanyIdentityReason(cleaned,{})){
+      r.azienda=cleaned;renamed++;updates.push(r);continue;
+    }
+    const reason=nonCompanyIdentityReason(oldName,{});
+    if(!reason)continue;
+    if(!isAutoQuarantined(r))r.note=`${AUTO_VERIFY_PREFIX} ${reason}. Record conservato, non eliminato; richiede verifica su sito/contatti.`;
+    r.priorita=Math.min(Number(r.priorita||0)||45,45);
+    updates.push(r);quarantined++;
+  }
+  if(updates.length)await putExactProspects(updates);
+  await metaSet("autoQuarantineVersion",AUTO_QUARANTINE_VERSION);
+  return {quarantined,renamed};
 }
 
 async function getHarvestState(){
