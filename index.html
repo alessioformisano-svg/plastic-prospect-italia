@@ -14820,7 +14820,7 @@ window.DB_DATA = {
 const ORIGINAL = structuredClone(window.DB_DATA.records);
 const REGION_PROVINCES = window.DB_DATA.regionProvinces;
 const DB_NAME="plastic-prospect-italia", STORE="companies", META="meta";
-const SEED_VERSION=10, HARVEST_TARGET=2500, HARVEST_VERSION=19, ENRICH_VERSION=5;
+const SEED_VERSION=10, HARVEST_TARGET=2500, HARVEST_VERSION=19, ENRICH_VERSION=6;
 const SUPABASE_CFG=window.PLASTIC_SUPABASE||{};
 const ADMIN_ALIAS=String(SUPABASE_CFG.adminAlias||"AMMINISTRATORE").toUpperCase();
 const ADMIN_EMAIL=String(SUPABASE_CFG.adminEmail||"").toLowerCase();
@@ -15291,6 +15291,7 @@ async function bootstrapData(){
 }
 async function reload(){renderOperatorControls();
   records=dedupeRecordsForView(await idbGetAll()).sort((a,b)=>(b.priorita||0)-(a.priorita||0)||a.azienda.localeCompare(b.azienda));
+  await loadEnrichmentStateCache();
   favorites=new Set(records.filter(r=>r.favorite).map(idOf));
   initFilters(); updateStorageBadges(); renderDashboard(); renderResults(); renderFavorites();
 }
@@ -15719,14 +15720,43 @@ function missingContactCount(r){
   return ["telefono","email","sito","comune","provincia","regione","indirizzo"]
     .reduce((n,f)=>n+(!String(r[f]||"").trim()?1:0),0);
 }
-function updateEnrichmentProgress(){
-  const total=records.length;
-  const incomplete=records.filter(r=>missingContactCount(r)>0).length;
-  const complete=Math.max(0,total-incomplete);
-  if($("#liveEnrichmentStatus")){
-    $("#liveEnrichmentStatus").textContent=`Arricchimento: ${complete}/${total} complete · ${incomplete} in coda`;
+
+// V13: la coda di arricchimento non può più bloccarsi per sempre.
+// Ogni record ha al massimo 3 tentativi automatici. I tentativi sono salvati in plastic_meta,
+// non nella tabella prospect, così non richiediamo modifiche allo schema Supabase.
+let enrichmentStateCache={version:ENRICH_VERSION,attempts:{},nextAt:{}};
+async function loadEnrichmentStateCache(){
+  const raw=(await metaGet("smartEnrichmentState"))||{};
+  if(Number(raw.version||0)!==ENRICH_VERSION){
+    enrichmentStateCache={version:ENRICH_VERSION,attempts:{},nextAt:{}};
+    await metaSet("smartEnrichmentState",enrichmentStateCache);
+  }else{
+    enrichmentStateCache={version:ENRICH_VERSION,attempts:raw.attempts||{},nextAt:raw.nextAt||{}};
   }
-  return {total,complete,incomplete};
+  return enrichmentStateCache;
+}
+function enrichmentAttempts(r){return Number(enrichmentStateCache.attempts?.[r._id]||0)}
+function enrichmentNextAt(r){return Number(enrichmentStateCache.nextAt?.[r._id]||0)}
+function isReliablePartial(r){return !!(String(r.sito||"").trim() && (String(r.telefono||"").trim() || String(r.email||"").trim()))}
+function getEnrichmentQueueStats(now=Date.now()){
+  let complete=0,partial=0,active=0,waiting=0,manual=0,incomplete=0;
+  for(const r of records){
+    const miss=missingContactCount(r);
+    if(!miss){complete++;continue}
+    incomplete++;
+    if(isReliablePartial(r))partial++;
+    const attempts=enrichmentAttempts(r);
+    if(attempts>=3){manual++;continue}
+    if(enrichmentNextAt(r)>now)waiting++; else active++;
+  }
+  return {total:records.length,complete,partial,active,waiting,manual,incomplete};
+}
+function updateEnrichmentProgress(){
+  const st=getEnrichmentQueueStats();
+  if($("#liveEnrichmentStatus")){
+    $("#liveEnrichmentStatus").textContent=`Arricchimento: ${st.complete} complete · ${st.partial} parziali · ${st.active} attive · ${st.waiting} in attesa · ${st.manual} manuali`;
+  }
+  return st;
 }
 
 const ENRICH_REGION_ORDER=["Lombardia","Piemonte","Toscana","Lazio","Campania"];
@@ -15810,33 +15840,43 @@ window.enrichSingleRecord=enrichSingleRecord;
 
 async function runEnrichmentPass(limit=1){
   let done=0,changed=0;
-  const state=(await metaGet("smartEnrichmentState"))||{version:ENRICH_VERSION,doneIds:[]};
-  if(Number(state.version||0)!==ENRICH_VERSION){state.version=ENRICH_VERSION;state.doneIds=[];}
-  const doneSet=new Set(state.doneIds||[]);
+  await loadEnrichmentStateCache();
+  const now=Date.now();
 
-  let candidates=records
-    .filter(r=>missingContactCount(r)>0 && !doneSet.has(r._id))
-    .sort(enrichmentSort);
-
-  // Terminato il primo giro: ricomincia per recuperare dati che nel frattempo sono apparsi sul web.
-  if(!candidates.length){
-    state.doneIds=[];doneSet.clear();
-    candidates=records.filter(r=>missingContactCount(r)>0).sort(enrichmentSort);
-  }
+  // Solo la coda ATTIVA è bloccante. I record in attesa del retry e quelli esauriti
+  // non impediscono allo scraping di proseguire.
+  const candidates=records
+    .filter(r=>missingContactCount(r)>0 && enrichmentAttempts(r)<3 && enrichmentNextAt(r)<=now)
+    .sort((a,b)=>{
+      const da=enrichmentAttempts(a)-enrichmentAttempts(b);
+      return da || enrichmentSort(a,b);
+    });
 
   for(const r of candidates){
     if(enrichPauseRequested||done>=limit)break;
-    const missing=missingContactCount(r);
-    const label=`${r.azienda} · ${missing} campi mancanti`;
+    const before=missingContactCount(r);
+    const attemptsBefore=enrichmentAttempts(r);
+    const label=`${r.azienda} · tentativo ${attemptsBefore+1}/3 · ${before} campi mancanti`;
     if($("#enrichWebStatus"))$("#enrichWebStatus").textContent=`Ricerca contatti: ${label}`;
 
     const didChange=await enrichRecord(r);
     if(didChange)changed++;
+    const after=missingContactCount(r);
+    const attempts=attemptsBefore+1;
+    enrichmentStateCache.attempts[r._id]=attempts;
 
-    doneSet.add(r._id);
-    state.doneIds=[...doneSet].slice(-3000);
-    state.version=ENRICH_VERSION;
-    await metaSet("smartEnrichmentState",state);
+    if(after===0){
+      delete enrichmentStateCache.nextAt[r._id];
+    }else if(attempts>=3){
+      // Esce definitivamente dalla coda automatica; resta disponibile per il pulsante manuale.
+      delete enrichmentStateCache.nextAt[r._id];
+    }else{
+      // Retry distanziati: 2 ore dopo il primo tentativo, 12 ore dopo il secondo.
+      const delay=attempts===1 ? 2*60*60*1000 : 12*60*60*1000;
+      enrichmentStateCache.nextAt[r._id]=Date.now()+delay;
+    }
+    enrichmentStateCache.version=ENRICH_VERSION;
+    await metaSet("smartEnrichmentState",enrichmentStateCache);
 
     done++;
     // Ritmo prudente per evitare 429.
@@ -15844,9 +15884,9 @@ async function runEnrichmentPass(limit=1){
   }
 
   if(changed)await reload();
+  const st=updateEnrichmentProgress();
   if($("#enrichWebStatus")){
-    $("#enrichWebStatus").textContent=`Completamento: ${changed} aziende aggiornate su ${done} controllate · restano ${records.filter(r=>missingContactCount(r)>0).length} incomplete`;
-    updateEnrichmentProgress();
+    $("#enrichWebStatus").textContent=`Completamento: ${changed} aggiornate su ${done} controllate · coda attiva ${st.active} · attesa ${st.waiting} · manuali ${st.manual}`;
   }
   return changed;
 }
@@ -15856,10 +15896,11 @@ async function startEnrichment(auto=false){
   let totalChanged=0,cycles=0;
 
   while(!enrichPauseRequested && cycles<25){
-    const incomplete=records.filter(r=>missingContactCount(r)>0).length;
-    if(!incomplete)break;
+    await loadEnrichmentStateCache();
+    const st=getEnrichmentQueueStats();
+    if(!st.active)break;
 
-    const changed=await runEnrichmentPass(auto?1:Math.min(5,incomplete));
+    const changed=await runEnrichmentPass(auto?1:Math.min(5,st.active));
     totalChanged+=changed;cycles++;
 
     // Auto: una azienda alla volta per convivere con il crawler.
@@ -15869,8 +15910,8 @@ async function startEnrichment(auto=false){
 
   enrichRunning=false;
   if($("#enrichWebStatus")){
-    $("#enrichWebStatus").textContent=`Arricchimento pronto · ${totalChanged} aggiornamenti in questa sessione`;
-    updateEnrichmentProgress();
+    const st=updateEnrichmentProgress();
+    $("#enrichWebStatus").textContent=`Arricchimento pronto · ${totalChanged} aggiornamenti · attive ${st.active} · manuali ${st.manual}`;
   }
 }
 function pauseEnrichment(){
@@ -16703,6 +16744,19 @@ async function startWebHarvest(auto=false){
     if($("#webHarvestStatus"))$("#webHarvestStatus").textContent=status;
     setCrawlerLive(status,"busy");
 
+    // V13: bilanciamento dinamico. Lo scraping NON si blocca mai per le aziende irrisolvibili:
+    // conta solo la coda attiva (max 3 tentativi). Più la coda cresce, più richieste vanno all'arricchimento.
+    await loadEnrichmentStateCache();
+    const qst=getEnrichmentQueueStats();
+    const enrichBurst=qst.active>300?4:(qst.active>100?2:(qst.active>0?1:0));
+    if(enrichBurst && !enrichRunning){
+      const balanceMsg=`Priorità arricchimento: ${qst.active} attive · lavoro ${enrichBurst} prima della prossima ricerca`;
+      if($("#webHarvestStatus"))$("#webHarvestStatus").textContent=balanceMsg;
+      setCrawlerLive(balanceMsg,"busy");
+      enrichPauseRequested=false;
+      await runEnrichmentPass(enrichBurst);
+    }
+
     try{
       const searchResult=await resilientWebSearch(task.query);
       const hits=searchResult.hits;
@@ -16721,8 +16775,7 @@ async function startWebHarvest(auto=false){
       setCrawlerLive(msg,"busy");
       if($("#liveCrawlerAdded"))$("#liveCrawlerAdded").textContent=state.added||0;
 
-      // Una passata leggera sulle fonti ufficiali appena disponibili.
-      if(!enrichRunning){enrichPauseRequested=false;await runEnrichmentPass(1);}
+      // L'arricchimento viene bilanciato prima di ogni query in base alla sola coda attiva.
       await updateHarvestUi();
       await new Promise(r=>setTimeout(r,8500));
     }catch(err){

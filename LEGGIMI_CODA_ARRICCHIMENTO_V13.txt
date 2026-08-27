@@ -1,0 +1,18 @@
+PLASTIC PROSPECT ITALIA - V13 CODA ARRICCHIMENTO NON BLOCCANTE
+
+Modifiche:
+- Massimo 3 tentativi AUTOMATICI di arricchimento per ogni azienda incompleta.
+- Dopo il 1° tentativo non conclusivo: nuovo tentativo dopo 2 ore.
+- Dopo il 2° tentativo non conclusivo: nuovo tentativo dopo 12 ore.
+- Dopo il 3° tentativo non conclusivo: il record esce dalla coda automatica e passa tra i "manuali"; resta comunque disponibile il pulsante Completa dati.
+- I tentativi sono salvati in plastic_meta: nessuna modifica allo schema della tabella plastic_prospects.
+- La dashboard distingue: complete, parziali, attive, in attesa, manuali.
+- Lo scraping non si ferma mai per record irrisolvibili. Usa solo la CODA ATTIVA per decidere il ritmo:
+  * oltre 300 attive: 4 arricchimenti prima di ogni nuova query;
+  * 101-300 attive: 2 arricchimenti prima di ogni nuova query;
+  * 1-100 attive: 1 arricchimento prima di ogni nuova query;
+  * 0 attive: scraping normale.
+- I record in attesa del retry e quelli esauriti/manuali NON bloccano la ricerca di nuove aziende.
+- Lo scraper Supabase non viene modificato da questa release.
+
+Obiettivo: impedire che aziende impossibili da completare tengano ferma la ricerca, ma evitare anche che lo scraper accumuli migliaia di record vuoti più velocemente dell'arricchimento.
