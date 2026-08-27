@@ -1,0 +1,21 @@
+PLASTIC PROSPECT ITALIA - FIX NOMI GENERICI + SCORE
+
+Correzioni applicate:
+1. I titoli SEO vengono trasformati nel vero nome azienda prima del salvataggio.
+   Esempi:
+   - Acrital | Lavorazioni di materie plastiche -> Acrital
+   - Alpeat - Specialisti Materie Plastiche Torino -> Alpeat
+   - Azienda lavorazioni materie plastiche a Torino | Realplex -> Realplex
+   - Aziende lavorazione materie plastiche Milano - Saet -> Saet
+2. Titoli generici come "Aziende di Fabbricazione di prodotti" e
+   "Allestimenti e Lavorazioni di Materie Plastiche" vengono scartati.
+3. Pulizia una tantum del database: elimina i vecchi record generici non lavorati,
+   rinomina i titoli SEO già salvati e poi esegue una nuova deduplica fisica.
+4. I nuovi risultati non ricevono più automaticamente 98/99 dal profilo di ricerca.
+   La priorità viene derivata dal punteggio di evidenza dello scraper (55-95).
+5. I vecchi record automatici non lavorati con score 98/99 vengono normalizzati a max 94.
+6. HARVEST_VERSION portata a 19 e deduplica fisica a versione 2.
+7. Lo scraper Supabase incluso nel pacchetto è esattamente il file separato fornito dall'utente.
+
+Test effettuato:
+- controllo sintassi JavaScript del frontend con node --check: OK.

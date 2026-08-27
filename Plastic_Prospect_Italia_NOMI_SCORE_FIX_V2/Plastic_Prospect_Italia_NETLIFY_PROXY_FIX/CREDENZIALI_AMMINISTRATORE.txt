@@ -1,0 +1,13 @@
+PLASTIC PROSPECT ITALIA · VINK
+
+ACCESSO UNICO
+
+UTENTE AMMINISTRATORE
+AMMINISTRATORE
+
+PASSWORD
+VinkItalia2026!
+
+Nella schermata di login non devi più scegliere USER o AMMINISTRATORE.
+- Se inserisci AMMINISTRATORE, il programma riconosce automaticamente l'accesso admin.
+- Se inserisci una email, il programma effettua l'accesso Supabase come USER/INSIDER.

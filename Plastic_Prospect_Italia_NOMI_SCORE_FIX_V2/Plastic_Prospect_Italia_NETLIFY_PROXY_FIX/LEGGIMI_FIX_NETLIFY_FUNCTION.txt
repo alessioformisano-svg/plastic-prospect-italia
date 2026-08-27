@@ -1,0 +1,10 @@
+FIX DEFINITIVO COLLEGAMENTO SCRAPER
+
+- NON modificare plastic-scraper su Supabase: il test diretto e gia corretto.
+- La webapp NON chiama piu Supabase dal browser.
+- La webapp chiama /.netlify/functions/plastic-scraper-proxy sullo stesso sito Netlify.
+- La Netlify Function server-side inoltra la richiesta all'endpoint Supabase esatto.
+- Nessun _redirects esterno, nessun CORS cross-origin browser, nessun Authorization Bearer.
+- Nessuna modifica al database o alla baseline aziende.
+
+Caricare l'intero ZIP su Netlify, perche la cartella netlify/functions deve essere inclusa nel deploy.

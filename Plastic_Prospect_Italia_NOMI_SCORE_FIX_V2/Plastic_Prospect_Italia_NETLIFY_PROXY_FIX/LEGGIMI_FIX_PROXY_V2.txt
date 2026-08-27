@@ -1,0 +1,17 @@
+FIX PROXY V2 - 26/08/2026
+
+Problema eliminato alla radice:
+Browser -> Netlify stesso dominio -> Supabase Edge Function.
+
+Modifiche:
+- route frontend unica: /api/plastic-scraper
+- redirect Netlify verso la Function server-side
+- Function riscritta nel formato handler Netlify classico, piu compatibile
+- nessuna chiamata browser diretta a Supabase
+- diagnostica con stadio preciso dell'errore
+- GET della Function restituisce un health check del proxy
+- nessuna modifica alla base dati aziende
+
+IMPORTANTE:
+Questo pacchetto deve essere pubblicato tramite repository GitHub collegato a Netlify oppure tramite un deploy che includa davvero le Netlify Functions.
+Il semplice trascinamento della sola cartella statica non e sufficiente se Netlify non costruisce/deploya la cartella netlify/functions.
