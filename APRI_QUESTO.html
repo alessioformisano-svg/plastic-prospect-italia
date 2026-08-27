@@ -14837,42 +14837,32 @@ const sb=SUPABASE_ENABLED?window.supabase.createClient(SUPABASE_CFG.url,SUPABASE
 
 
 // =============================================================
-// INTEGRAZIONE EDGE DIRETTA SUPABASE - FORMATO UFFICIALE
-// Browser -> Supabase Edge Function con apikey header + JSON.
-// Verify JWT deve essere OFF sulla funzione plastic-scraper.
-// Nessun proxy Netlify, nessun _redirects, nessuna Netlify Function.
+// INTEGRAZIONE EDGE SEMPLICE - COMPATIBILE CON NETLIFY DRAG & DROP
+// Browser -> Supabase Edge Function diretta con richiesta CORS "simple".
+// Nessuna Netlify Function, nessun _redirects, nessun supabase.functions.invoke.
+// La publishable key viaggia nel BODY; lo scraper la valida server-side.
 // =============================================================
-const PLASTIC_SCRAPER_URL=SUPABASE_CFG.url.replace(/\/$/,"")+"/functions/v1/plastic-scraper";
+const PLASTIC_SCRAPER_URL="https://artwylvnenaxyilcatec.supabase.co/functions/v1/plastic-scraper";
+const PLASTIC_SCRAPER_PROXY="/.netlify/functions/plastic-scraper-proxy";
 async function edgeInvoke(action,payload={}){
   const ctrl=new AbortController();
   const timer=setTimeout(()=>ctrl.abort(),30000);
   try{
-    const response=await fetch(PLASTIC_SCRAPER_URL,{
+    const response=await fetch(PLASTIC_SCRAPER_PROXY,{
       method:"POST",
-      headers:{
-        "apikey":SUPABASE_CFG.anonKey,
-        "Content-Type":"application/json",
-        "Accept":"application/json"
-      },
-      body:JSON.stringify({action,...payload}),
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({action,...payload,publishableKey:SUPABASE_CFG.anonKey}),
       signal:ctrl.signal,
-      cache:"no-store",
-      credentials:"omit"
+      cache:"no-store"
     });
     const text=await response.text();
     let data=null;
     try{data=text?JSON.parse(text):null}catch{}
-    if(!response.ok){
-      const detail=data?.error||data?.message||text||response.statusText;
-      throw new Error(`plastic-scraper HTTP ${response.status}: ${detail}`);
-    }
+    if(!response.ok) throw new Error(`plastic-scraper HTTP ${response.status}: ${data?.error||text||response.statusText}`);
     if(!data?.ok) throw new Error(data?.error||"Risposta plastic-scraper non valida");
     return data;
   }catch(err){
     if(err?.name==="AbortError") throw new Error("plastic-scraper timeout dopo 30 secondi");
-    if(String(err?.message||err).toLowerCase().includes("failed to fetch")){
-      throw new Error("Connessione browser→Supabase bloccata (CORS/rete). La Edge Function risponde nel test Supabase, ma il browser non riesce a raggiungerla.");
-    }
     throw err;
   }finally{clearTimeout(timer)}
 }
@@ -16562,7 +16552,7 @@ if($("#crawlerTestBtn"))$("#crawlerTestBtn").onclick=async()=>{
   }catch(err){
     const msg="TEST SUPABASE plastic-scraper FALLITO: "+String(err?.message||err);
     setCrawlerLive(msg,"error");
-    alert(msg+"\n\nIl test NON usa Reader come fallback e NON modifica il database.\nIl test chiama direttamente la Edge Function Supabase con lo stesso formato del test ufficiale: apikey header + JSON. Se fallisce, il messaggio mostra lo stato HTTP o un errore CORS/rete.");
+    alert(msg+"\n\nIl test NON usa Reader come fallback e NON modifica il database.\nIl test usa la Netlify Function server-side dedicata. Se fallisce, controllare solo i log della funzione Netlify plastic-scraper-proxy e che plastic-scraper sia attiva su Supabase.");
   }finally{
     btn.disabled=false;
     btn.textContent=oldText;

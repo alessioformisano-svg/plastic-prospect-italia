@@ -17,6 +17,29 @@ const BUSINESS_DIRECTORY_HOST = /(^|\.)(paginegialle\.it|paginebianche\.it|retei
 
 const BAD_TITLE = /\b(significato|etimologia|vocabolario|dizionario|definizione|offerte? di lavoro|annunci di lavoro|lavora con noi|stipendio|wikipedia|news|notizie|forum|login|property records|public records|people search|people finder|phone number|address & phone|email address|office locations?|campus|matches|assessor|county|acquista|compra|shopping|che cos['’]è|cos['’]è|guida(?: completa)?|fai da te)\b/i;
 const IMAGE_PLACEHOLDER_TITLE = /^!?\s*\[?\s*(?:image|immagine|img|thumbnail|logo|foto|picture)\b/i;
+const GENERIC_COMPANY_TITLE = /^(?:aziende?|imprese?|ditte?)\s+(?:di|che|per|del|della|dei|delle)\b|^(?:elenco|lista|directory|catalogo)\s+(?:di\s+)?(?:aziende|imprese|ditte|fornitori|produttori)\b/i;
+
+function isGenericCompanyTitle(raw = "") {
+  const title = cleanSearchTitle(String(raw || "")).trim();
+  if (!title) return true;
+
+  // Titoli di categoria/portale, non ragioni sociali.
+  if (GENERIC_COMPANY_TITLE.test(title)) return true;
+  if (/^(?:aziende?|imprese?|ditte?|fornitori|produttori|fabbricazione|produzione|lavorazione|lavorazioni|servizi)\s*$/i.test(title)) return true;
+
+  const hasLegalForm = /\b(?:s\.?\s*r\.?\s*l\.?|srls|s\.?\s*p\.?\s*a\.?|s\.?\s*n\.?\s*c\.?|snc|s\.?\s*a\.?\s*s\.?|sas)\b/i.test(title);
+  const parts = title.split(/\s+[|–—-]\s+/).map((x) => x.trim()).filter(Boolean);
+
+  // Frasi puramente descrittive senza un brand/ragione sociale riconoscibile.
+  if (parts.length === 1 && !hasLegalForm && /^(?:fabbricazione|produzione|lavorazione|lavorazioni|fornitura|servizi)\s+(?:di|dei|delle|per)\s+.{3,}$/i.test(title)) {
+    return true;
+  }
+
+  // Esempio valido da NON scartare: "Lavorazione Materie Plastiche CNC | Tecno-Plast".
+  // Se dopo il separatore esiste un brand plausibile, il risultato può restare.
+  return false;
+}
+
 
 const STRONG_TARGET = /\b(plexiglas|plexiglass|pmma|acrilico|acrilici|metacrilato|policarbonato|petg|pvc(?: espanso)?|forex|pom|delrin|ptfe|peek|pvdf|polietilene|pehd|pe-hd|polipropilene|nylon|tecnopolimer|polimeri? termoplastici|semilavorati plastici|materie plastiche|abs|polistirolo|hips|lastre plastiche|barre plastiche|tondi plastici|pannelli plastici|supporti rigidi plastici|termoform|carpenteria plastica|fresatura cnc.*plastic|taglio laser.*(?:plex|acril|plastic)|protezioni macchina.*policarbonato|vasche in pvc|vasche in pp)\b/i;
 
@@ -142,7 +165,7 @@ function candidateScore(x: any, query = "") {
   const host = domainText(x.url);
   const blob = `${title} ${description} ${host}`;
 
-  if (!title || BAD_TITLE.test(title) || IMAGE_PLACEHOLDER_TITLE.test(title)) return -999;
+  if (!title || BAD_TITLE.test(title) || IMAGE_PLACEHOLDER_TITLE.test(title) || isGenericCompanyTitle(title)) return -999;
 
   const strong = STRONG_TARGET.test(blob);
   const process = ACTIVE_PROCESS_SIGNAL.test(blob);
@@ -260,6 +283,7 @@ function rankResults(items: any[], query = "") {
     const urlKey = String(x.url || "").toLowerCase().replace(/\/$/, "");
     if (!x.title || !x.url || seenUrls.has(urlKey)) continue;
     seenUrls.add(urlKey);
+    if (isGenericCompanyTitle(x.title)) continue;
 
     const kind = candidateKind(x);
     const score = candidateScore(x, query);

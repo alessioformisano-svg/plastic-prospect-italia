@@ -14818,7 +14818,7 @@ window.DB_DATA = {
 const ORIGINAL = structuredClone(window.DB_DATA.records);
 const REGION_PROVINCES = window.DB_DATA.regionProvinces;
 const DB_NAME="plastic-prospect-italia", STORE="companies", META="meta";
-const SEED_VERSION=10, HARVEST_TARGET=2500, HARVEST_VERSION=18, ENRICH_VERSION=3;
+const SEED_VERSION=10, HARVEST_TARGET=2500, HARVEST_VERSION=19, ENRICH_VERSION=3;
 const SUPABASE_CFG=window.PLASTIC_SUPABASE||{};
 const ADMIN_ALIAS=String(SUPABASE_CFG.adminAlias||"AMMINISTRATORE").toUpperCase();
 const ADMIN_EMAIL=String(SUPABASE_CFG.adminEmail||"").toLowerCase();
@@ -15049,6 +15049,18 @@ function cleanSerpTitle(name){
   return raw.replace(/\s+/g," ").trim();
 }
 
+function genericProspectPhrase(name){
+  const t=cleanSerpTitle(name).trim();
+  if(!t)return true;
+  const legal=/\b(?:s\.?\s*r\.?\s*l\.?|srls|s\.?\s*p\.?\s*a\.?|s\.?\s*n\.?\s*c\.?|snc|s\.?\s*a\.?\s*s\.?|sas)\b/i.test(t);
+  if(legal)return false;
+  return /^(?:aziende?|imprese?|ditte?)\s+(?:di|che|per|del|della|dei|delle|lavorazione|lavorazioni)\b/i.test(t)
+    || /^(?:elenco|lista|directory|catalogo)\s+(?:di\s+)?(?:aziende|imprese|ditte|fornitori|produttori)\b/i.test(t)
+    || /^(?:allestimenti(?:\s+e)?\s+)?lavorazioni?\s+(?:di\s+)?materie\s+plastiche(?:\s+.*)?$/i.test(t)
+    || /^(?:fabbricazione|produzione|lavorazione|lavorazioni|fornitura|servizi)\s+(?:di|dei|delle|per)\s+.{3,}$/i.test(t)
+    || /^(?:aziende?|imprese?|ditte?|fornitori|produttori|fabbricazione|produzione|lavorazione|lavorazioni|servizi)$/i.test(t);
+}
+
 function invalidCompanyName(name){
   const raw=String(name||"").replace(/\s+/g," ").trim();
   if(!raw)return true;
@@ -15059,6 +15071,7 @@ function invalidCompanyName(name){
 
   const t=cleanSerpTitle(raw);
   if(t.length<2||t.length>120)return true;
+  if(genericProspectPhrase(t))return true;
 
   // Pagine non aziendali / people finder / directory / contenuti informativi.
   if(/\b(address\s*(?:&|and)\s*phone|phone number|email address|office locations?|campus|\d+\s*matches?|people search|people finder|white pages|public records?|property records?|the villages?|denmark pl|street address|contact details?|locations? near me)\b/i.test(t))return true;
@@ -15139,8 +15152,17 @@ async function bootstrapData(){
     await metaSet("seedVersion",SEED_VERSION);
   }
 
-  // Deduplica FISICA controllata del database:
-  // unisce prima tutti i dati nel record principale e cancella le copie solo dopo upsert riuscito.
+  // Prima normalizza/elimina i vecchi titoli SEO/generici già presenti nel DB.
+  // Non tocca aziende già lavorate dagli operatori.
+  try{
+    const cleanResult=await cleanupGenericProspectsOnce();
+    if(cleanResult.deleted||cleanResult.renamed||cleanResult.rescored){
+      console.info(`Pulizia nomi prospect: ${cleanResult.deleted} eliminati, ${cleanResult.renamed} rinominati, ${cleanResult.rescored} score normalizzati.`);
+    }
+  }catch(err){console.error("Pulizia nomi prospect annullata",err);}
+
+  // Poi deduplica FISICAMENTE il database sui nomi già normalizzati.
+  // Salva sempre prima il record unificato e cancella le copie solo dopo upsert riuscito.
   try{
     const dedupResult=await cleanupPhysicalDuplicatesOnce();
     if(dedupResult.deleted){
@@ -15149,9 +15171,6 @@ async function bootstrapData(){
   }catch(err){
     console.error("Deduplica fisica DB annullata: nessun gruppo non salvato viene cancellato.",err);
   }
-
-  // I filtri invalidCompanyName/invalidProspectResult valgono solo per NUOVI risultati
-  // prima del loro inserimento.
 
   await loadOperators();
   renderOperatorControls();
@@ -15822,22 +15841,9 @@ function searchHostBlocked(url){
 }
 
 function candidateCompanyName(title,url){
-  let t=cleanSerpTitle(title);
-  if(!t||invalidCompanyName(t))return "";
-  t=t.replace(/\s*[-|–—]\s*(Home|Homepage|Sito ufficiale|Official Site|Chi siamo|Contatti).*$/i,"").trim();
-
-  // Ragione sociale esplicita.
-  const legal=t.match(/^(.{2,90}?\b(?:S\.?\s*R\.?\s*L\.?|SRLS|S\.?\s*P\.?\s*A\.?|SNC|S\.?\s*N\.?\s*C\.?|SAS|S\.?\s*A\.?\s*S\.?))\b/i);
-  if(legal)t=legal[1].trim();
-  else t=t.split(/\s+[|–—]\s+|\s+-\s+/)[0].trim();
-
-  t=t.replace(/^(Home|Homepage|Azienda|Contatti)\s*[:|-]\s*/i,"").trim();
-  if(t.length<3||t.length>95)return "";
-
-  const generic=/^(lavorazione|materie plastiche|plexiglass|policarbonato|termoformatura|carpenteria|espositori|insegne|prodotti|servizi|home|homepage|contatti|chi siamo)\b/i;
-  if(generic.test(t) && !/\b(srl|spa|snc|sas|plast|plex|neon|group|italia)\b/i.test(t))return "";
+  const t=canonicalCompanyNameFromSearchTitle(title);
+  if(!t)return "";
   if(/\b(amazon|wikipedia|pagine gialle|europages|kompass|facebook|instagram|linkedin)\b/i.test(t))return "";
-  if(invalidCompanyName(t))return "";
   return t;
 }
 
@@ -15887,19 +15893,31 @@ async function fetchTextWithTimeout(url,options={},timeoutMs=30000){
 }
 
 
-function edgeCandidateCompanyName(title){
-  let t=cleanSerpTitle(title);
+function canonicalCompanyNameFromSearchTitle(title){
+  let t=cleanSerpTitle(title).replace(/^\s*[ᐅ•·]+\s*/g,"").trim();
   if(!t)return "";
-  // Togli descrizioni di directory/schede e conserva il nome aziendale.
-  t=t.replace(/^\s*[ᐅ•·]+\s*/g,"").trim();
-  t=t.replace(/\s*[-|–—]\s*(?:iGlobal|MisterImprese(?:\.it)?|Rete Imprese|PagineGialle|PagineBianche|Virgilio|Atoka|ShowMeLocal|Advertising Agency).*$/i,"").trim();
-  t=t.replace(/\s+(?:a|in)\s+[A-ZÀ-Ý][^:|–—-]{2,80}(?::.*)?$/i,"").trim();
-  t=t.replace(/\s*:\s*(?:Mappa e Contatti|Dati societari|Dati aziendali).*$/i,"").trim();
-  t=t.replace(/,?\s*(?:Partita IVA|Fatturato|bilanci|indici|Orari Apertura|Mappa e Contatti|Address & Phone Number).*$/i,"").trim();
-  const legal=t.match(/^(.{2,90}?\b(?:S\.?\s*R\.?\s*L\.?|SRLS|S\.?\s*P\.?\s*A\.?|SNC|S\.?\s*N\.?\s*C\.?|SAS|S\.?\s*A\.?\s*S\.?))\b/i);
+  t=t.replace(/\s*:\s*(?:Mappa e Contatti|Dati societari|Dati aziendali|Orari Apertura|Address & Phone Number).*$/i,"").trim();
+  t=t.replace(/,?\s*(?:Partita IVA|P\.?\s*IVA|Fatturato|bilanci|indici|Orari Apertura|Mappa e Contatti|Address & Phone Number).*$/i,"").trim();
+
+  const legal=t.match(/^(.{2,95}?\b(?:S\.?\s*R\.?\s*L\.?|SRLS|S\.?\s*P\.?\s*A\.?|SNC|S\.?\s*N\.?\s*C\.?|SAS|S\.?\s*A\.?\s*S\.?))\b/i);
   if(legal)t=legal[1].trim();
+  else{
+    const parts=t.split(/\s+[|–—]\s+|\s+-\s+/).map(x=>x.trim()).filter(Boolean);
+    if(parts.length>1){
+      const plausible=parts.filter(x=>!genericProspectPhrase(x) && !/^(?:specialisti?|lavorazioni?|materie plastiche|torino|milano|piemonte|lombardia)\b/i.test(x));
+      if(plausible.length)t=plausible.sort((a,b)=>a.length-b.length)[0];
+      else if(!genericProspectPhrase(parts[parts.length-1]))t=parts[parts.length-1];
+    }
+  }
+
+  t=t.replace(/\s+(?:a|in)\s+[^,|:]{2,80}\s*\([A-Z]{2}\)\s*$/i,"").trim();
+  t=t.replace(/\s+(?:a|in)\s+[^,|:]{2,80},\s*(?:via|viale|piazza|corso|strada|loc\.?|localit[aà])\b.*$/i,"").trim();
   if(invalidCompanyName(t))return "";
   return t.length>=3&&t.length<=95?t:"";
+}
+
+function edgeCandidateCompanyName(title){
+  return canonicalCompanyNameFromSearchTitle(title);
 }
 function companyIdentityKey(name){
   let t=cleanSerpTitle(name||"");
@@ -15926,7 +15944,7 @@ function dedupeRecordsForView(list){
 }
 
 
-const PHYSICAL_DEDUP_VERSION=1;
+const PHYSICAL_DEDUP_VERSION=2;
 
 function canonicalPreserveExistingId(r){
   const c=canonical(r||{});
@@ -16198,6 +16216,18 @@ async function resilientWebSearch(query){
 }
 
 
+function priorityFromSearchEvidence(hit,task){
+  const edgeScore=Number(hit?.score);
+  if(Number.isFinite(edgeScore) && edgeScore>=10){
+    // Il punteggio dello scraper è un punteggio di evidenza, non una priorità CRM.
+    // Lo convertiamo in 55-95 senza trasformare ogni risultato in 99.
+    return Math.max(55,Math.min(95,Math.round(55+(edgeScore-10))));
+  }
+  const base=Number(task?.priorita||80);
+  // Fallback Reader: resta prudente perché il sito non è stato validato dallo scraper.
+  return Math.max(60,Math.min(90,base-8));
+}
+
 async function mergeSearchResults(results,task){
   const all=await idbGetAll();
   const byName=new Map(all.map(r=>[companyIdentityKey(r.azienda)||normalize(r.azienda),r]));
@@ -16228,7 +16258,7 @@ async function mergeSearchResults(results,task){
       attivita:task.attivita,
       materiali:task.materiali,
       interesse:task.interesse,
-      priorita:task.priorita,
+      priorita:priorityFromSearchEvidence(hit,task),
       fonte:hit.url,
       esito_chiamata:"DA CONTATTARE"
     });
@@ -16371,6 +16401,36 @@ async function mergeWebCandidates(cands){
   }
   if(batch.length)await idbPutMany(batch);
   return added;
+}
+
+const GENERIC_NAME_CLEANUP_VERSION=1;
+async function cleanupGenericProspectsOnce(){
+  const done=Number(await metaGet("genericNameCleanupVersion")||0);
+  if(done>=GENERIC_NAME_CLEANUP_VERSION)return {deleted:0,renamed:0,rescored:0};
+  const all=await rawGetAllForPhysicalDedup();
+  const updates=[],deleteIds=[];
+  let renamed=0,rescored=0;
+  for(const raw of all){
+    const r=canonicalPreserveExistingId(raw);
+    const oldName=String(r.azienda||"").trim();
+    const cleaned=canonicalCompanyNameFromSearchTitle(oldName);
+    if(!cleaned){
+      if(genericProspectPhrase(oldName) && !meaningfulStatus(r.esito_chiamata) && !meaningfulStatus(r.stato))deleteIds.push(String(r._id||""));
+      continue;
+    }
+    let changed=false;
+    if(cleaned!==oldName){r.azienda=cleaned;changed=true;renamed++;}
+    // I record automatici mai lavorati con score 98/99 vengono riportati sotto 95.
+    // I record già chiamati/modificati manualmente non vengono toccati.
+    if(Number(r.priorita||0)>=98 && String(r.fonte||"").trim() && !meaningfulStatus(r.esito_chiamata) && !meaningfulStatus(r.stato)){
+      r.priorita=Math.min(94,Number(r.priorita||0));changed=true;rescored++;
+    }
+    if(changed)updates.push(r);
+  }
+  if(updates.length)await putExactProspects(updates);
+  if(deleteIds.filter(Boolean).length)await idbDeleteMany(deleteIds.filter(Boolean));
+  await metaSet("genericNameCleanupVersion",GENERIC_NAME_CLEANUP_VERSION);
+  return {deleted:deleteIds.filter(Boolean).length,renamed,rescored};
 }
 
 async function getHarvestState(){

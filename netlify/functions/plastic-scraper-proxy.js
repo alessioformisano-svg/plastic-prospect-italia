@@ -1,4 +1,4 @@
-const SUPABASE_FUNCTION_URL = "https://artwylvnenaxyilcatec.supabase.co/functions/v1/plastic-scrape";
+const SUPABASE_FUNCTION_URL = "https://artwylvnenaxyilcatec.supabase.co/functions/v1/plastic-scraper";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=utf-8",
@@ -79,12 +79,7 @@ exports.handler = async function(event) {
     const message = err && err.name === "AbortError"
       ? "Timeout chiamata Supabase dopo 28 secondi"
       : String((err && err.message) || err);
-
-    return json(502, {
-      ok: false,
-      stage: "netlify-to-supabase",
-      error: message
-    });
+    return json(502, { ok: false, stage: "netlify-to-supabase", error: message });
   } finally {
     clearTimeout(timer);
   }
