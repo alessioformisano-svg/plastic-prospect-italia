@@ -1,0 +1,8 @@
+V17 - RICERCA + ARRICCHIMENTO SEMPRE PARALLELI
+
+- La ricerca non viene mai bloccata dalla coda di arricchimento.
+- Ogni ciclo esegue prima 3-5 arricchimenti (in base alla coda) e poi sempre 1 nuova ricerca.
+- Canton Ticino ripristinato stabilmente nella copertura e nelle query automatiche.
+- Le fonti directory vengono lette per recuperare la vera "Ragione Sociale" (es. titolo SEO "84131 Salerno" -> Mt Plex).
+- Se il record corretto coincide con un'azienda già presente per nome, telefono o dominio, i dati vengono fusi e il duplicato rimosso.
+- Nessuna modifica richiesta allo scraper Supabase.
